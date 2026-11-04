@@ -1,0 +1,95 @@
+{
+  "capsule_version": "0.1",
+  "spec_ref": "CONTINUUM-CAPSULE-SPEC-0.1",
+  "content": {
+    "fingerprint": "9bb481b32841ca696f20ce6193cc84b2e23c46887b968ed037e6e262eddf83bb",
+    "fingerprint_alg": "sha256",
+    "media_type": "application/jsonl",
+    "description": "training corpus source manifest"
+  },
+  "consent_chain": {
+    "records": [
+      {
+        "id": "REC-0001",
+        "type": "SOURCE_ATTESTATION",
+        "source": "licensed-news-corpus-A",
+        "license": "commercial-redistribution",
+        "approved_by": "data-governance-lead",
+        "approved_at": "2026-03-01T00:00:00Z",
+        "scope": "model:foundation-v2:pretraining"
+      },
+      {
+        "id": "REC-0002",
+        "type": "INGEST",
+        "source_ref": "REC-0001",
+        "ingested_at": "2026-03-02T00:00:00Z"
+      }
+    ]
+  },
+  "root": {
+    "root_hash": "6e283924b5c2da08805b1e063307beb1806ebce3141577c6889dc264994d9919",
+    "merkle_alg": "sha256",
+    "inclusion_proofs": {
+      "CONTENT": [
+        {
+          "side": "R",
+          "hash": "8bbe16bf65f9b070294a64177d46e77e041aa30a0a958e53e23e21fdf8a83393"
+        },
+        {
+          "side": "R",
+          "hash": "f466bcae3e545591b0003afb9ed3edd3a021c95cb9fb31d3628d08493fb86770"
+        }
+      ],
+      "REC-0001": [
+        {
+          "side": "L",
+          "hash": "3f0006f3ef796e97aa93c7fc98de32e0addf92dde3df8419c0174b523750f9b2"
+        },
+        {
+          "side": "R",
+          "hash": "f466bcae3e545591b0003afb9ed3edd3a021c95cb9fb31d3628d08493fb86770"
+        }
+      ],
+      "REC-0002": [
+        {
+          "side": "R",
+          "hash": "ca6fd9fc55256c076da83d25a0d0c3db6b40248720fb5f26af7bb1175b054536"
+        },
+        {
+          "side": "L",
+          "hash": "febc0153895e29b9d0e375887129cd6a1bf18a3489bece3f8f9fd9cb1bacc7b2"
+        }
+      ]
+    }
+  },
+  "key_provenance": {
+    "issuer_id": "CONTINUUM-ISSUER-01",
+    "pubkey_alg": "ed25519",
+    "issuer_pubkey": "a06fe6dcd19cb7c083d553ade1dd5ac38d25fb4bc6b65201a3862912f602bca6",
+    "issuer_signature": "3585afe6dfff0cb3683d2ebc7d228d10c749aa3199f7a2bc34f074441aaa056939bed53d9d8b13020ffc04b21e334fc29cae8c96811332e078932db047fedc03",
+    "note": "sandbox key; production pins this pubkey out of band"
+  },
+  "anchors": [
+    {
+      "witness": "nist-beacon",
+      "root": "6e283924b5c2da08805b1e063307beb1806ebce3141577c6889dc264994d9919",
+      "observed_at": "2026-11-04T16:12:35.535Z",
+      "anchor_pubkey": "439fa91cc620eeb81e24e7cc2f120072e5eb30a9cc95f5c43ccd5d84009ddd68",
+      "anchor_signature": "da308340a62367686600d387c297c96dad70b3507663cf4f6e008653f1c7d1638537fa72fa606dcd91b471a505bc4107055680426f8fac2efcc25f22b45dcd08"
+    }
+  ],
+  "timestamps": [
+    {
+      "alg": "sha256+ed25519",
+      "stamped_at": "2026-11-04T16:12:35.536Z",
+      "digest": "daf19a431391f43ed01175377d7d33749221da17f5e866292d80eba5345b3618",
+      "pubkey": "64234939ea8aba431c4ecc6b356425b68aa10b150f6b403223aafa9f9996fa00",
+      "signature": "2df8923a014947908efcff1b2710e4075c788b04118a2812028c01f7d2aa394395f7bf692fcbd9bfd1b81df5e205cf50aa5d5f24a72c5c3c59f840b0575b7d01"
+    }
+  ],
+  "trust_horizons": {
+    "sha256": "2035-01-01T00:00:00Z",
+    "sha3_512": "2050-01-01T00:00:00Z",
+    "sha1": "2017-01-01T00:00:00Z"
+  }
+}
