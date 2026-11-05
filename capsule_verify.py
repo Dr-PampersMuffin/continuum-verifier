@@ -70,7 +70,7 @@ def leaf_hash(entry) -> str:
     return hashlib.sha256(cbytes(entry)).hexdigest()
 
 
-def verify(capsule: dict, now: datetime = None):
+def verify(capsule: dict, now: datetime = None, expected_issuer: str = None):
     now = now or datetime.now(timezone.utc)
     res = []
 
@@ -109,13 +109,28 @@ def verify(capsule: dict, now: datetime = None):
         res.append(R("inclusion", True,
                      f"content + {len(records)} record(s) fold to the anchored root"))
 
-    # 3. issuer signature over root
+    # 3. issuer signature over root, and (if pinned) authentication against the
+    #    EXPECTED issuer. Trusted issuer identity must come from OUTSIDE the file:
+    #    a self-asserted key proves self-consistency, not that the expected issuer
+    #    signed it (swap the embedded key, re-sign, and the file still agrees with
+    #    itself). --expected-issuer supplies that out-of-band pin.
     kp = capsule["key_provenance"]
-    issuer_ok = ed25519_verify(kp.get("issuer_pubkey", ""), root_hash.encode(),
-                               kp.get("issuer_signature", ""))
-    res.append(R("issuer_signature", issuer_ok,
-                 f"issuer {kp.get('issuer_id')!r} over root"
-                 if issuer_ok else "issuer signature does not verify over root_hash"))
+    issuer_authenticated = False
+    if not ed25519_verify(kp.get("issuer_pubkey", ""), root_hash.encode(),
+                          kp.get("issuer_signature", "")):
+        res.append(R("issuer_signature", False, "issuer signature does not verify over root_hash"))
+    elif expected_issuer is None:
+        res.append(R("issuer_signature", True,
+                     f"self-asserted key for issuer {kp.get('issuer_id')!r} "
+                     "(no expected issuer pinned; identity UNVERIFIED)"))
+    elif kp.get("issuer_pubkey", "").lower() == expected_issuer.lower():
+        issuer_authenticated = True
+        res.append(R("issuer_signature", True,
+                     f"authenticated as the expected issuer {kp.get('issuer_id')!r}"))
+    else:
+        res.append(R("issuer_signature", False,
+                     "authenticated key does NOT match the expected issuer pinned "
+                     "out of band (issuer-key substitution)"))
 
     # 4. anchors — any durable witness?
     durable = False
@@ -172,9 +187,9 @@ def verify(capsule: dict, now: datetime = None):
         return "WITHHELD", res
     if restamp_needed:
         return "RESTAMP_NEEDED", res
-    if not durable:
-        return "SELF_CONSISTENT", res
-    return "VERIFIED", res
+    if durable and issuer_authenticated:
+        return "VERIFIED", res
+    return "SELF_CONSISTENT", res
 
 
 EXIT = {"VERIFIED": 0, "WITHHELD": 1, "FAILED": 2, "SELF_CONSISTENT": 3, "RESTAMP_NEEDED": 4}
@@ -187,10 +202,10 @@ def render(verdict, res, path):
         print(r)
     print("-" * 74)
     msg = {
-        "VERIFIED": "self-contained checks pass AND a durable public witness anchors the root",
+        "VERIFIED": "checks pass, a durable witness anchors the root, and the key is authenticated as the expected issuer",
         "WITHHELD": "a check failed; tampered or malformed; no confident answer by design",
         "FAILED": "not parseable as a Continuum Evidence Capsule",
-        "SELF_CONSISTENT": "internally self-verifying, but no durable witness; root durability unproven",
+        "SELF_CONSISTENT": "internally self-verifying, but not bound to BOTH a durable witness and an expected issuer; self-consistent, not authenticated",
         "RESTAMP_NEEDED": "self-verifying, but newest crypto is past its trust horizon; re-stamp before trusting",
     }[verdict]
     print(f"VERDICT: {verdict}   {msg}")
@@ -202,6 +217,9 @@ def main():
     ap.add_argument("capsule")
     ap.add_argument("--quiet", action="store_true")
     ap.add_argument("--now", help="override 'now' as ISO (for testing crypto horizons)")
+    ap.add_argument("--expected-issuer",
+                    help="hex Ed25519 public key of the expected issuer, pinned out of band; "
+                         "required for a VERIFIED verdict (otherwise the issuer is UNVERIFIED)")
     args = ap.parse_args()
     try:
         with open(args.capsule) as f:
@@ -211,7 +229,7 @@ def main():
             print(f"FAILED to load {args.capsule}: {e}")
         sys.exit(2)
     now = _iso(args.now) if args.now else None
-    verdict, res = verify(cap, now=now)
+    verdict, res = verify(cap, now=now, expected_issuer=args.expected_issuer)
     if not args.quiet:
         render(verdict, res, args.capsule)
     sys.exit(EXIT[verdict])

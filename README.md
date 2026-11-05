@@ -23,11 +23,15 @@ python3 capsule_verify.py samples/sample_capsule_durable.json
 python3 capsule_verify.py samples/sample_capsule_selfasserted.json
 
 # run the adversarial suite: clean capsules + every tamper + the battery swap
-python3 attack_capsule.py        # 14/14 expected
+python3 attack_capsule.py        # 18/18 expected
 
 # make your own capsule, then re-stamp it onto fresh crypto
 python3 capsule_pack.py mycap.json --witness nist-beacon
 python3 capsule_restamp.py mycap.json mycap.v2.json
+
+# authenticate the issuer against a key pinned OUT OF BAND (not read from the file).
+# without this, the issuer identity is UNVERIFIED and the verdict caps at SELF_CONSISTENT.
+python3 capsule_verify.py mycap.json --expected-issuer <issuer_pubkey_hex>
 ```
 
 Only dependency beyond the Python standard library is an Ed25519 verify
@@ -35,18 +39,30 @@ Only dependency beyond the Python standard library is an Ed25519 verify
 
 ## Verdicts
 
-- **VERIFIED** — every check passes AND a durable public witness anchors the root.
-- **SELF_CONSISTENT** — internally self-verifying, but the witness is self-asserted; durability over time is unproven.
+- **VERIFIED** — every check passes, a durable public witness anchors the root, AND the key is authenticated against an expected issuer pinned out of band (`--expected-issuer`).
+- **SELF_CONSISTENT** — internally self-verifying, but missing a durable witness and/or an expected-issuer pin. The record agrees with itself; it is not authenticated as the expected issuer.
 - **RESTAMP_NEEDED** — self-verifying, but the newest crypto is past its trust horizon. The verifier is telling you the proof needs re-stamping before you trust it.
-- **WITHHELD** — a hash, signature, or inclusion check failed. No confident answer, by design.
+- **WITHHELD** — a hash, signature, or inclusion check failed, or the key does not match the expected issuer. No confident answer, by design.
 - **FAILED** — not parseable as a capsule.
+
+## Why `--expected-issuer` matters
+
+The issuer's public key travels inside the capsule. So a signature that verifies
+only proves the file agrees with itself: swap the embedded key, re-sign the same
+root, and it still "verifies." That is self-consistency, not authentication. To
+know a record was signed by the issuer you expect, the verifier needs that
+issuer's key from **outside** the file, pinned out of band, exactly as it already
+treats the anchor authority key. `--expected-issuer <hex>` supplies it; without
+it the issuer is UNVERIFIED and the verdict cannot exceed SELF_CONSISTENT.
 
 ## What it proves, and what it does not
 
-Proves: a verified record was attested by a named key, is unmodified, folds into
-a single anchored root (content included, not as decoration), and carries no
-crypto past its trust horizon. The format is designed so that proving *when*
-something was attested is a first-class check, not an afterthought.
+Proves: a verified record was attested by a key, is unmodified, folds into a
+single anchored root (content included, not as decoration), carries no crypto
+past its trust horizon, and, when an expected issuer is pinned, was signed by
+that issuer and not a substituted key. The format is designed so that proving
+*when* something was attested, and *who* attested it, are first-class checks,
+not afterthoughts.
 
 Does **not** prove: the truth of the underlying facts. A capsule attests
 custody and integrity. Whether a claim inside it is true is a separate question.

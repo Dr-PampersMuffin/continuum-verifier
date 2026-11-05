@@ -1,0 +1,264 @@
+diff --git a/CAPSULE-SPEC-0.1.md b/CAPSULE-SPEC-0.1.md
+index 358a4ae..e5cad07 100644
+--- a/CAPSULE-SPEC-0.1.md
++++ b/CAPSULE-SPEC-0.1.md
+@@ -38,18 +38,25 @@ pure-stdlib implementation lacks).
+ 2. Inclusion: for each record, fold its leaf hash up `inclusion_proof`
+    (`side=L` -> `H(sibling || h)`, `side=R` -> `H(h || sibling)`). Computed root
+    must equal `root.root_hash`. Mismatch -> WITHHELD.
+-3. Issuer signature: Ed25519-verify `key_provenance.issuer_signature` over
+-   `root_hash` with `issuer_pubkey`. Fail -> WITHHELD.
++3. Issuer signature and authentication: Ed25519-verify
++   `key_provenance.issuer_signature` over `root_hash` with `issuer_pubkey`. Fail
++   -> WITHHELD. The `issuer_pubkey` is carried in the file, so a valid signature
++   proves self-consistency, not that the EXPECTED issuer signed it (swap the key,
++   re-sign the same root, and it still verifies against itself). If an expected
++   issuer key is supplied out of band, compare it to `issuer_pubkey`: mismatch ->
++   WITHHELD; match -> the issuer is authenticated. With no expected issuer, the
++   issuer is UNVERIFIED and the verdict cannot exceed SELF_CONSISTENT.
+ 4. Anchors: for each, verify its signature over the canonical
+    `{root, witness, observed_at}` with its pubkey. Record whether ANY verifying
+    anchor's witness is in the durable set.
+ 5. Re-stamp trail: for each entry, recompute `digest = H_alg(root_hash)` and
+    Ed25519-verify its signature; any failure -> WITHHELD. Take the newest entry;
+    if its algorithm's horizon is in the past -> RESTAMP_NEEDED.
+-6. Verdict precedence: WITHHELD (any check failed) > RESTAMP_NEEDED (newest
+-   crypto past horizon) > SELF_CONSISTENT (all internal checks pass but no
+-   durable anchor verified) > VERIFIED (internal checks pass AND a durable anchor
+-   verified AND crypto not expired).
++6. Verdict precedence: WITHHELD (any check failed, including issuer mismatch) >
++   RESTAMP_NEEDED (newest crypto past horizon) > SELF_CONSISTENT (internal checks
++   pass but missing a durable anchor and/or an authenticated expected issuer) >
++   VERIFIED (internal checks pass AND a durable anchor verified AND the issuer is
++   authenticated against an out-of-band expected key AND crypto not expired).
+ 
+ Exit codes: 0 VERIFIED, 1 WITHHELD, 2 FAILED (unparseable), 3 SELF_CONSISTENT,
+ 4 RESTAMP_NEEDED.
+diff --git a/README.md b/README.md
+index 1addc87..71a2ad2 100644
+--- a/README.md
++++ b/README.md
+@@ -23,11 +23,15 @@ python3 capsule_verify.py samples/sample_capsule_durable.json
+ python3 capsule_verify.py samples/sample_capsule_selfasserted.json
+ 
+ # run the adversarial suite: clean capsules + every tamper + the battery swap
+-python3 attack_capsule.py        # 14/14 expected
++python3 attack_capsule.py        # 18/18 expected
+ 
+ # make your own capsule, then re-stamp it onto fresh crypto
+ python3 capsule_pack.py mycap.json --witness nist-beacon
+ python3 capsule_restamp.py mycap.json mycap.v2.json
++
++# authenticate the issuer against a key pinned OUT OF BAND (not read from the file).
++# without this, the issuer identity is UNVERIFIED and the verdict caps at SELF_CONSISTENT.
++python3 capsule_verify.py mycap.json --expected-issuer <issuer_pubkey_hex>
+ ```
+ 
+ Only dependency beyond the Python standard library is an Ed25519 verify
+@@ -35,18 +39,30 @@ Only dependency beyond the Python standard library is an Ed25519 verify
+ 
+ ## Verdicts
+ 
+-- **VERIFIED** — every check passes AND a durable public witness anchors the root.
+-- **SELF_CONSISTENT** — internally self-verifying, but the witness is self-asserted; durability over time is unproven.
++- **VERIFIED** — every check passes, a durable public witness anchors the root, AND the key is authenticated against an expected issuer pinned out of band (`--expected-issuer`).
++- **SELF_CONSISTENT** — internally self-verifying, but missing a durable witness and/or an expected-issuer pin. The record agrees with itself; it is not authenticated as the expected issuer.
+ - **RESTAMP_NEEDED** — self-verifying, but the newest crypto is past its trust horizon. The verifier is telling you the proof needs re-stamping before you trust it.
+-- **WITHHELD** — a hash, signature, or inclusion check failed. No confident answer, by design.
++- **WITHHELD** — a hash, signature, or inclusion check failed, or the key does not match the expected issuer. No confident answer, by design.
+ - **FAILED** — not parseable as a capsule.
+ 
++## Why `--expected-issuer` matters
++
++The issuer's public key travels inside the capsule. So a signature that verifies
++only proves the file agrees with itself: swap the embedded key, re-sign the same
++root, and it still "verifies." That is self-consistency, not authentication. To
++know a record was signed by the issuer you expect, the verifier needs that
++issuer's key from **outside** the file, pinned out of band, exactly as it already
++treats the anchor authority key. `--expected-issuer <hex>` supplies it; without
++it the issuer is UNVERIFIED and the verdict cannot exceed SELF_CONSISTENT.
++
+ ## What it proves, and what it does not
+ 
+-Proves: a verified record was attested by a named key, is unmodified, folds into
+-a single anchored root (content included, not as decoration), and carries no
+-crypto past its trust horizon. The format is designed so that proving *when*
+-something was attested is a first-class check, not an afterthought.
++Proves: a verified record was attested by a key, is unmodified, folds into a
++single anchored root (content included, not as decoration), carries no crypto
++past its trust horizon, and, when an expected issuer is pinned, was signed by
++that issuer and not a substituted key. The format is designed so that proving
++*when* something was attested, and *who* attested it, are first-class checks,
++not afterthoughts.
+ 
+ Does **not** prove: the truth of the underlying facts. A capsule attests
+ custody and integrity. Whether a claim inside it is true is a separate question.
+diff --git a/attack_capsule.py b/attack_capsule.py
+index 272c40a..20a7c69 100644
+--- a/attack_capsule.py
++++ b/attack_capsule.py
+@@ -9,6 +9,8 @@ from datetime import datetime, timezone
+ import capsule_pack as P
+ import capsule_restamp as RS
+ from capsule_verify import verify
++from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
++from cryptography.hazmat.primitives import serialization as _ser
+ 
+ RESULTS = []
+ def check(name, expected, got, extra=""):
+@@ -21,7 +23,9 @@ content = {"fingerprint": P.sha256(b"m"), "fingerprint_alg": "sha256",
+ 
+ print("CLEAN CAPSULES (honest verdicts)")
+ durable = P.pack(P.sample_records(), content, witness="nist-beacon")
+-check("durable witness", "VERIFIED", verify(durable)[0])
++EXP = durable["key_provenance"]["issuer_pubkey"]   # the out-of-band pinned issuer key
++check("durable + pinned issuer", "VERIFIED", verify(durable, expected_issuer=EXP)[0])
++check("durable, issuer UNpinned", "SELF_CONSISTENT", verify(durable)[0])
+ selfc = P.pack(P.sample_records(), content, witness="demo-beacon")
+ check("self-asserted witness", "SELF_CONSISTENT", verify(selfc)[0])
+ expired = P.pack(P.sample_records(), content, witness="nist-beacon", stamp_alg="sha1+ed25519")
+@@ -46,14 +50,16 @@ check("content fingerprint swap", "WITHHELD", verify(t)[0])
+ 
+ print("\nBATTERY SWAP (re-stamp revives an expired capsule)")
+ revived = RS.restamp(copy.deepcopy(expired), alg="sha3_512+ed25519")
+-check("expired -> re-stamped", "VERIFIED", verify(revived)[0])
++check("expired -> re-stamped", "VERIFIED",
++      verify(revived, expected_issuer=revived["key_provenance"]["issuer_pubkey"])[0])
+ 
+ print("\nFORWARD-DURABILITY over simulated time")
+ # same durable capsule checked at a future date past sha256's horizon
+ future = datetime(2040,1,1,tzinfo=timezone.utc)
+ check("durable @2040 (sha256 stale)", "RESTAMP_NEEDED", verify(durable, now=future)[0])
+ revived2 = RS.restamp(copy.deepcopy(durable), alg="sha3_512+ed25519")
+-check("re-stamped @2040", "VERIFIED", verify(revived2, now=future)[0])
++check("re-stamped @2040", "VERIFIED",
++      verify(revived2, now=future, expected_issuer=EXP)[0])
+ 
+ print("\nSELF-CONTAINMENT (verify runs with the engine nowhere on the path)")
+ tmp = tempfile.mkdtemp(prefix="stranger2050_")
+@@ -62,8 +68,8 @@ try:
+                 os.path.join(tmp, "capsule_verify.py"))
+     json.dump(durable, open(os.path.join(tmp, "cap.json"), "w"))
+     # bare dir: only the verifier + the capsule. No pack, no engine, no spec code.
+-    proc = subprocess.run([sys.executable, "-I", "capsule_verify.py", "cap.json", "--quiet"],
+-                          cwd=tmp)
++    proc = subprocess.run([sys.executable, "-I", "capsule_verify.py", "cap.json",
++                           "--quiet", "--expected-issuer", EXP], cwd=tmp)
+     rev = {0:"VERIFIED",1:"WITHHELD",2:"FAILED",3:"SELF_CONSISTENT",4:"RESTAMP_NEEDED"}
+     listing = sorted(os.listdir(tmp))
+     check("bare-dir verify", "VERIFIED", rev.get(proc.returncode, f"exit{proc.returncode}"),
+@@ -71,6 +77,21 @@ try:
+ finally:
+     shutil.rmtree(tmp, ignore_errors=True)
+ 
++print("\nISSUER AUTHENTICATION (the trust boundary, out-of-band pin)")
++genuine = P.pack(P.sample_records(), content, witness="nist-beacon")
++gpub = genuine["key_provenance"]["issuer_pubkey"]
++check("key matches pin", "VERIFIED", verify(genuine, expected_issuer=gpub)[0])
++# swap the embedded issuer key, re-sign the same root, keep the claimed id unchanged
++swap = copy.deepcopy(genuine)
++atk = Ed25519PrivateKey.generate()
++atkpub = atk.public_key().public_bytes(
++    encoding=_ser.Encoding.Raw, format=_ser.PublicFormat.Raw).hex()
++swap["key_provenance"]["issuer_pubkey"] = atkpub
++swap["key_provenance"]["issuer_signature"] = atk.sign(
++    genuine["root"]["root_hash"].encode()).hex()
++check("issuer-key swap vs pin", "WITHHELD", verify(swap, expected_issuer=gpub)[0])
++check("issuer-key swap, no pin", "SELF_CONSISTENT", verify(swap)[0])
++
+ print("\n" + "="*72)
+ print(f"SUMMARY: {sum(RESULTS)}/{len(RESULTS)} behaved as expected")
+ sys.exit(0 if all(RESULTS) else 1)
+diff --git a/capsule_verify.py b/capsule_verify.py
+index cab7da4..9ab4513 100644
+--- a/capsule_verify.py
++++ b/capsule_verify.py
+@@ -70,7 +70,7 @@ def leaf_hash(entry) -> str:
+     return hashlib.sha256(cbytes(entry)).hexdigest()
+ 
+ 
+-def verify(capsule: dict, now: datetime = None):
++def verify(capsule: dict, now: datetime = None, expected_issuer: str = None):
+     now = now or datetime.now(timezone.utc)
+     res = []
+ 
+@@ -109,13 +109,28 @@ def verify(capsule: dict, now: datetime = None):
+         res.append(R("inclusion", True,
+                      f"content + {len(records)} record(s) fold to the anchored root"))
+ 
+-    # 3. issuer signature over root
++    # 3. issuer signature over root, and (if pinned) authentication against the
++    #    EXPECTED issuer. Trusted issuer identity must come from OUTSIDE the file:
++    #    a self-asserted key proves self-consistency, not that the expected issuer
++    #    signed it (swap the embedded key, re-sign, and the file still agrees with
++    #    itself). --expected-issuer supplies that out-of-band pin.
+     kp = capsule["key_provenance"]
+-    issuer_ok = ed25519_verify(kp.get("issuer_pubkey", ""), root_hash.encode(),
+-                               kp.get("issuer_signature", ""))
+-    res.append(R("issuer_signature", issuer_ok,
+-                 f"issuer {kp.get('issuer_id')!r} over root"
+-                 if issuer_ok else "issuer signature does not verify over root_hash"))
++    issuer_authenticated = False
++    if not ed25519_verify(kp.get("issuer_pubkey", ""), root_hash.encode(),
++                          kp.get("issuer_signature", "")):
++        res.append(R("issuer_signature", False, "issuer signature does not verify over root_hash"))
++    elif expected_issuer is None:
++        res.append(R("issuer_signature", True,
++                     f"self-asserted key for issuer {kp.get('issuer_id')!r} "
++                     "(no expected issuer pinned; identity UNVERIFIED)"))
++    elif kp.get("issuer_pubkey", "").lower() == expected_issuer.lower():
++        issuer_authenticated = True
++        res.append(R("issuer_signature", True,
++                     f"authenticated as the expected issuer {kp.get('issuer_id')!r}"))
++    else:
++        res.append(R("issuer_signature", False,
++                     "authenticated key does NOT match the expected issuer pinned "
++                     "out of band (issuer-key substitution)"))
+ 
+     # 4. anchors — any durable witness?
+     durable = False
+@@ -172,9 +187,9 @@ def verify(capsule: dict, now: datetime = None):
+         return "WITHHELD", res
+     if restamp_needed:
+         return "RESTAMP_NEEDED", res
+-    if not durable:
+-        return "SELF_CONSISTENT", res
+-    return "VERIFIED", res
++    if durable and issuer_authenticated:
++        return "VERIFIED", res
++    return "SELF_CONSISTENT", res
+ 
+ 
+ EXIT = {"VERIFIED": 0, "WITHHELD": 1, "FAILED": 2, "SELF_CONSISTENT": 3, "RESTAMP_NEEDED": 4}
+@@ -187,10 +202,10 @@ def render(verdict, res, path):
+         print(r)
+     print("-" * 74)
+     msg = {
+-        "VERIFIED": "self-contained checks pass AND a durable public witness anchors the root",
++        "VERIFIED": "checks pass, a durable witness anchors the root, and the key is authenticated as the expected issuer",
+         "WITHHELD": "a check failed; tampered or malformed; no confident answer by design",
+         "FAILED": "not parseable as a Continuum Evidence Capsule",
+-        "SELF_CONSISTENT": "internally self-verifying, but no durable witness; root durability unproven",
++        "SELF_CONSISTENT": "internally self-verifying, but not bound to BOTH a durable witness and an expected issuer; self-consistent, not authenticated",
+         "RESTAMP_NEEDED": "self-verifying, but newest crypto is past its trust horizon; re-stamp before trusting",
+     }[verdict]
+     print(f"VERDICT: {verdict}   {msg}")
+@@ -202,6 +217,9 @@ def main():
+     ap.add_argument("capsule")
+     ap.add_argument("--quiet", action="store_true")
+     ap.add_argument("--now", help="override 'now' as ISO (for testing crypto horizons)")
++    ap.add_argument("--expected-issuer",
++                    help="hex Ed25519 public key of the expected issuer, pinned out of band; "
++                         "required for a VERIFIED verdict (otherwise the issuer is UNVERIFIED)")
+     args = ap.parse_args()
+     try:
+         with open(args.capsule) as f:
+@@ -211,7 +229,7 @@ def main():
+             print(f"FAILED to load {args.capsule}: {e}")
+         sys.exit(2)
+     now = _iso(args.now) if args.now else None
+-    verdict, res = verify(cap, now=now)
++    verdict, res = verify(cap, now=now, expected_issuer=args.expected_issuer)
+     if not args.quiet:
+         render(verdict, res, args.capsule)
+     sys.exit(EXIT[verdict])

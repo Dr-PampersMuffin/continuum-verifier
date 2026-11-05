@@ -38,18 +38,25 @@ pure-stdlib implementation lacks).
 2. Inclusion: for each record, fold its leaf hash up `inclusion_proof`
    (`side=L` -> `H(sibling || h)`, `side=R` -> `H(h || sibling)`). Computed root
    must equal `root.root_hash`. Mismatch -> WITHHELD.
-3. Issuer signature: Ed25519-verify `key_provenance.issuer_signature` over
-   `root_hash` with `issuer_pubkey`. Fail -> WITHHELD.
+3. Issuer signature and authentication: Ed25519-verify
+   `key_provenance.issuer_signature` over `root_hash` with `issuer_pubkey`. Fail
+   -> WITHHELD. The `issuer_pubkey` is carried in the file, so a valid signature
+   proves self-consistency, not that the EXPECTED issuer signed it (swap the key,
+   re-sign the same root, and it still verifies against itself). If an expected
+   issuer key is supplied out of band, compare it to `issuer_pubkey`: mismatch ->
+   WITHHELD; match -> the issuer is authenticated. With no expected issuer, the
+   issuer is UNVERIFIED and the verdict cannot exceed SELF_CONSISTENT.
 4. Anchors: for each, verify its signature over the canonical
    `{root, witness, observed_at}` with its pubkey. Record whether ANY verifying
    anchor's witness is in the durable set.
 5. Re-stamp trail: for each entry, recompute `digest = H_alg(root_hash)` and
    Ed25519-verify its signature; any failure -> WITHHELD. Take the newest entry;
    if its algorithm's horizon is in the past -> RESTAMP_NEEDED.
-6. Verdict precedence: WITHHELD (any check failed) > RESTAMP_NEEDED (newest
-   crypto past horizon) > SELF_CONSISTENT (all internal checks pass but no
-   durable anchor verified) > VERIFIED (internal checks pass AND a durable anchor
-   verified AND crypto not expired).
+6. Verdict precedence: WITHHELD (any check failed, including issuer mismatch) >
+   RESTAMP_NEEDED (newest crypto past horizon) > SELF_CONSISTENT (internal checks
+   pass but missing a durable anchor and/or an authenticated expected issuer) >
+   VERIFIED (internal checks pass AND a durable anchor verified AND the issuer is
+   authenticated against an out-of-band expected key AND crypto not expired).
 
 Exit codes: 0 VERIFIED, 1 WITHHELD, 2 FAILED (unparseable), 3 SELF_CONSISTENT,
 4 RESTAMP_NEEDED.
