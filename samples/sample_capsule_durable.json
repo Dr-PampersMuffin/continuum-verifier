@@ -1,6 +1,6 @@
 {
-  "capsule_version": "0.1",
-  "spec_ref": "CONTINUUM-CAPSULE-SPEC-0.1",
+  "capsule_version": "0.2",
+  "spec_ref": "CONTINUUM-CAPSULE-SPEC-0.2",
   "content": {
     "fingerprint": "9bb481b32841ca696f20ce6193cc84b2e23c46887b968ed037e6e262eddf83bb",
     "fingerprint_alg": "sha256",
@@ -29,6 +29,12 @@
   "root": {
     "root_hash": "6e283924b5c2da08805b1e063307beb1806ebce3141577c6889dc264994d9919",
     "merkle_alg": "sha256",
+    "leaf_ids": [
+      "CONTENT",
+      "REC-0001",
+      "REC-0002"
+    ],
+    "leaf_count": 3,
     "inclusion_proofs": {
       "CONTENT": [
         {
@@ -65,28 +71,30 @@
   "key_provenance": {
     "issuer_id": "CONTINUUM-ISSUER-01",
     "pubkey_alg": "ed25519",
-    "issuer_pubkey": "a06fe6dcd19cb7c083d553ade1dd5ac38d25fb4bc6b65201a3862912f602bca6",
-    "issuer_signature": "3585afe6dfff0cb3683d2ebc7d228d10c749aa3199f7a2bc34f074441aaa056939bed53d9d8b13020ffc04b21e334fc29cae8c96811332e078932db047fedc03",
+    "issuer_pubkey": "406ab8742960f747fa243c881563fba0389299f862b6eb56ae07afcfdf06330e",
+    "issuer_signature": "9596b92dff08ec611f0e8440a612668e5e92374378e1bd5d3cacb3c6baa4c21bd90d75b0aa7a793f7f7506b897bdf92282da65abce2e06b02e2f5ca77e79d907",
     "note": "sandbox key; production pins this pubkey out of band"
   },
   "anchors": [
     {
       "witness": "nist-beacon",
       "root": "6e283924b5c2da08805b1e063307beb1806ebce3141577c6889dc264994d9919",
-      "observed_at": "2026-11-04T16:12:35.535Z",
-      "anchor_pubkey": "439fa91cc620eeb81e24e7cc2f120072e5eb30a9cc95f5c43ccd5d84009ddd68",
-      "anchor_signature": "da308340a62367686600d387c297c96dad70b3507663cf4f6e008653f1c7d1638537fa72fa606dcd91b471a505bc4107055680426f8fac2efcc25f22b45dcd08"
+      "observed_at": "2026-11-13T20:20:20.858Z",
+      "anchor_pubkey": "26e86922be2a82f50104f89cccaeb978365e367e182c2a5e2b896e79f1a005c3",
+      "anchor_signature": "6751563a06a6e48ed83f015822134ee08a7b034b06b90ca8122cfaf582ed91d2473a26b8b0f3bb5c43f274fbfbedf4876870c844fe0eb1609c788b6c23ffc202"
     }
   ],
   "timestamps": [
     {
       "alg": "sha256+ed25519",
-      "stamped_at": "2026-11-04T16:12:35.536Z",
+      "stamped_at": "2026-11-13T20:20:20.858Z",
       "digest": "daf19a431391f43ed01175377d7d33749221da17f5e866292d80eba5345b3618",
-      "pubkey": "64234939ea8aba431c4ecc6b356425b68aa10b150f6b403223aafa9f9996fa00",
-      "signature": "2df8923a014947908efcff1b2710e4075c788b04118a2812028c01f7d2aa394395f7bf692fcbd9bfd1b81df5e205cf50aa5d5f24a72c5c3c59f840b0575b7d01"
+      "root": "6e283924b5c2da08805b1e063307beb1806ebce3141577c6889dc264994d9919",
+      "pubkey": "963fc46c132d2872f95bbd60768c8edbb76e1a84a3c9d0ec7c3b972a93d718dd",
+      "signature": "ea23b3b7966427d09c651b77a695a5563838f75b813a659cda06c1d0ebf55b51d743c3df7f494944300bf5b1d36cd714c06c349e938b8d587b9174e893f94609"
     }
   ],
+  "tree_renewals": [],
   "trust_horizons": {
     "sha256": "2035-01-01T00:00:00Z",
     "sha3_512": "2050-01-01T00:00:00Z",

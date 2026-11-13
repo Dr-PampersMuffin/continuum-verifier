@@ -1,6 +1,6 @@
 {
-  "capsule_version": "0.1",
-  "spec_ref": "CONTINUUM-CAPSULE-SPEC-0.1",
+  "capsule_version": "0.2",
+  "spec_ref": "CONTINUUM-CAPSULE-SPEC-0.2",
   "content": {
     "fingerprint": "9bb481b32841ca696f20ce6193cc84b2e23c46887b968ed037e6e262eddf83bb",
     "fingerprint_alg": "sha256",
@@ -29,6 +29,12 @@
   "root": {
     "root_hash": "6e283924b5c2da08805b1e063307beb1806ebce3141577c6889dc264994d9919",
     "merkle_alg": "sha256",
+    "leaf_ids": [
+      "CONTENT",
+      "REC-0001",
+      "REC-0002"
+    ],
+    "leaf_count": 3,
     "inclusion_proofs": {
       "CONTENT": [
         {
@@ -65,28 +71,30 @@
   "key_provenance": {
     "issuer_id": "CONTINUUM-ISSUER-01",
     "pubkey_alg": "ed25519",
-    "issuer_pubkey": "66444628228169cdfdee40f480f1137bdd97ffe1fe16fa79fb1db7aee5bc3b80",
-    "issuer_signature": "f0581aeb741e152f6b8fade91b211e6892cbfb9da2f75f46c63909ac7f2397a8972d3758efb725c1d67c523232af43554c34905e26838128e3bb4fbe54aed501",
+    "issuer_pubkey": "e1228fd9f7a4b4a01a2a464544f36a6b8a0c6154757b68d74ab0b13b148a9364",
+    "issuer_signature": "28cecd4efd7bf90e52497f2b207703a4105f8dd7e972d23912f4e77fc3fc48517a152b7ed7a602e9d7a652a4c0d46f73ab6e998b57103926e961d2198a85e50e",
     "note": "sandbox key; production pins this pubkey out of band"
   },
   "anchors": [
     {
       "witness": "demo-beacon",
       "root": "6e283924b5c2da08805b1e063307beb1806ebce3141577c6889dc264994d9919",
-      "observed_at": "2026-11-04T16:12:35.613Z",
-      "anchor_pubkey": "477235ee54c84e2adf90f4200646d14dce2bb0946b16913c3559304d4388ab21",
-      "anchor_signature": "c9a8028c953390b6ffd2696a37cff0bd2686511474138e3a705ec649dcf8452bca5b165be84d807d5d2bdcf9a8b6bf5598235c2594fceb5effcfc55635d3d20e"
+      "observed_at": "2026-11-13T20:20:20.919Z",
+      "anchor_pubkey": "fcd0a6f6d154cd45b5d1dbb80692cb3316571fd95853c29f20345841cc47f752",
+      "anchor_signature": "d416b7dfc1abf80016df3809fb3c7ec4f2d9ec115070cf2942644256abc08b5092456812961c4870d297ee749b96fbde89f4c309df4b46c128415b0d6747b908"
     }
   ],
   "timestamps": [
     {
       "alg": "sha256+ed25519",
-      "stamped_at": "2026-11-04T16:12:35.613Z",
+      "stamped_at": "2026-11-13T20:20:20.919Z",
       "digest": "daf19a431391f43ed01175377d7d33749221da17f5e866292d80eba5345b3618",
-      "pubkey": "35255c1133d2da45ac0a9368992d22802daac876dc21ef44bb01ee4ef33706df",
-      "signature": "d93ca5f905fe8d7a6ff99c50b8966704f6d8c51543778bbf8c77c487e971cac3d59a8cf4891ea789f6e6940ae27ee572bf74e2565f3684a9af9bec6d961d420c"
+      "root": "6e283924b5c2da08805b1e063307beb1806ebce3141577c6889dc264994d9919",
+      "pubkey": "8b374fe34d1b389396fa01dc847d2123065843e5af554b7eb046a507c8095087",
+      "signature": "865b4a955e177e64739024eadff6b22e9c02c7c90e57f68c7f282e9f2a688485d441c6d9398c712960f3b201b7b191b4912fd8252408535cd6641106b44f0c03"
     }
   ],
+  "tree_renewals": [],
   "trust_horizons": {
     "sha256": "2035-01-01T00:00:00Z",
     "sha3_512": "2050-01-01T00:00:00Z",

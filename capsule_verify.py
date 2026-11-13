@@ -1,23 +1,31 @@
 #!/usr/bin/env python3
 """
-capsule_verify.py — offline, self-contained verifier for a Continuum Evidence Capsule.
+capsule_verify.py — offline, self-contained verifier for a Continuum Evidence
+Capsule (spec 0.2). Imports NOTHING from the Continuum engine: standard library
+plus a single Ed25519 verify. The "stranger in 2050 with only the spec" test.
 
-The point of this file: it imports NOTHING from the Continuum engine. It reads
-only the capsule handed to it, using the Python standard library plus a single
-Ed25519 verify (the one primitive stdlib lacks; present in every language). This
-is the "stranger in 2050 with only the spec" test. If this file needs the engine,
-the capsule is not self-contained.
+Spec 0.2 closes four boundary gaps found in external review:
+  1. Durable witness keys are trusted only when PINNED out of band
+     (--expected-witness NAME=HEX). A self-signed anchor is never "durable".
+  2. Timestamps sign the whole envelope (alg + stamped_at + digest + root), so the
+     stamp time is not malleable; stamper keys count toward currency only when
+     pinned (--expected-stamper HEX).
+  3. The issuer signs a SIGNED ROOT HEADER committing to the ordered leaf vector,
+     so the presented record set must match exactly: no omission, no duplication.
+  4. Timestamp renewal and hash-tree renewal are distinct. The verifier checks BOTH
+     the newest timestamp's horizon AND the effective tree hash's horizon, and can
+     verify a chained hash-tree renewal under a fresh hash algorithm.
 
 Verdicts / exit codes: 0 VERIFIED, 1 WITHHELD, 2 FAILED, 3 SELF_CONSISTENT,
-4 RESTAMP_NEEDED. See CAPSULE-SPEC-0.1.md.
+4 RESTAMP_NEEDED. See CAPSULE-SPEC-0.2.md.
 """
 import sys, json, hashlib, argparse
 from datetime import datetime, timezone
 
-# The only non-stdlib primitive: Ed25519 verify.
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from cryptography.exceptions import InvalidSignature
 
+SPEC_VERSION = "0.2"
 DURABLE_WITNESSES = {"bitcoin-ots", "ct-log", "nist-beacon"}
 REQUIRED = {"capsule_version", "content", "consent_chain", "root",
             "key_provenance", "anchors", "timestamps", "trust_horizons"}
@@ -53,173 +61,251 @@ class R:
         return f"[{'PASS' if self.ok else 'FAIL'}] {self.name}" + (f"  ->  {self.detail}" if self.detail else "")
 
 
-def fold_inclusion(leaf_hash: str, proof: list) -> str:
+def fold(leaf_hash: str, proof: list, alg: str) -> str:
     h = leaf_hash
     for step in proof:
         sib = step["hash"]
         if step["side"] == "L":
-            h = hashlib.sha256((sib + h).encode()).hexdigest()
+            h = h_alg(alg, (sib + h).encode())
         elif step["side"] == "R":
-            h = hashlib.sha256((h + sib).encode()).hexdigest()
+            h = h_alg(alg, (h + sib).encode())
         else:
             raise ValueError(f"bad inclusion side: {step['side']}")
     return h
 
 
-def leaf_hash(entry) -> str:
-    return hashlib.sha256(cbytes(entry)).hexdigest()
+def leaf_hash(entry, alg: str) -> str:
+    return h_alg(alg, cbytes(entry))
 
 
-def verify(capsule: dict, now: datetime = None, expected_issuer: str = None):
+def _pin_map(pairs):
+    out = {}
+    for p in pairs or []:
+        k, _, v = p.partition("=")
+        out[k.strip()] = v.strip().lower()
+    return out
+
+
+def verify(capsule, now=None, expected_issuer=None,
+           expected_witnesses=None, expected_stampers=None, expected_renewer=None):
     now = now or datetime.now(timezone.utc)
+    expected_witnesses = {k: v.lower() for k, v in (expected_witnesses or {}).items()}
+    expected_stampers = set(s.lower() for s in expected_stampers) if expected_stampers else None
     res = []
+
+    if capsule.get("capsule_version") != SPEC_VERSION:
+        return "WITHHELD", [R("version", False,
+            f"capsule_version {capsule.get('capsule_version')!r}; this verifier requires {SPEC_VERSION} (re-issue)")]
 
     missing = REQUIRED - set(capsule.keys())
     if missing:
         return "FAILED", [R("structural", False, f"missing fields: {sorted(missing)}")]
     res.append(R("structural", True, f"capsule v{capsule['capsule_version']}"))
 
-    root_hash = capsule["root"].get("root_hash")
+    root = capsule["root"]
+    root_hash = root.get("root_hash")
     if not root_hash:
         return "FAILED", res + [R("structural", False, "root.root_hash missing")]
 
-    # 2. inclusion — the content commitment AND every record must fold to the
-    #    anchored root. Content is a leaf, not decoration: editing the fingerprint
-    #    changes its leaf hash and breaks the fold.
+    # reconstruct the leaf objects the issuer committed to
     records = capsule["consent_chain"].get("records", [])
-    proofs = capsule["root"].get("inclusion_proofs", {})
     if not records:
         return "FAILED", res + [R("structural", False, "consent_chain.records empty")]
     content_leaf = dict(capsule["content"]); content_leaf["id"] = "CONTENT"
     content_leaf["type"] = "CONTENT_COMMITMENT"
-    leaves = [("CONTENT", content_leaf)] + [(r.get("id"), r) for r in records]
-    inc_ok = True
-    for lid, obj in leaves:
-        if lid not in proofs:
-            inc_ok = False
-            res.append(R("inclusion", False, f"no inclusion proof for leaf {lid!r} (stripped?)"))
-            break
-        computed = fold_inclusion(leaf_hash(obj), proofs[lid])
-        if computed != root_hash:
-            inc_ok = False
-            res.append(R("inclusion", False,
-                         f"leaf {lid}: folds to {computed[:16]}... != root {root_hash[:16]}..."))
-            break
-    if inc_ok:
-        res.append(R("inclusion", True,
-                     f"content + {len(records)} record(s) fold to the anchored root"))
+    objs = [content_leaf] + records
+    present_ids = [o.get("id") for o in objs]
 
-    # 3. issuer signature over root, and (if pinned) authentication against the
-    #    EXPECTED issuer. Trusted issuer identity must come from OUTSIDE the file:
-    #    a self-asserted key proves self-consistency, not that the expected issuer
-    #    signed it (swap the embedded key, re-sign, and the file still agrees with
-    #    itself). --expected-issuer supplies that out-of-band pin.
+    # (3) LEAF-SET COMMITMENT — presented leaves must match the committed vector
+    committed = root.get("leaf_ids")
+    if committed is None or root.get("leaf_count") != len(committed):
+        res.append(R("leaf_set", False, "root.leaf_ids / leaf_count missing or inconsistent"))
+    elif len(set(present_ids)) != len(present_ids):
+        res.append(R("leaf_set", False, f"duplicate leaf id among presented leaves {present_ids}"))
+    elif present_ids != committed:
+        res.append(R("leaf_set", False, f"presented {present_ids} != committed {committed} (omission/addition)"))
+    else:
+        res.append(R("leaf_set", True, f"presented leaves match the committed set exactly ({len(committed)} leaves)"))
+
+    # (2a) INCLUSION under the original tree hash
+    proofs = root.get("inclusion_proofs", {})
+    inc_ok = True
+    for o in objs:
+        lid = o.get("id")
+        if lid not in proofs:
+            inc_ok = False; res.append(R("inclusion", False, f"no inclusion proof for leaf {lid!r} (stripped?)")); break
+        if fold(leaf_hash(o, "sha256"), proofs[lid], "sha256") != root_hash:
+            inc_ok = False; res.append(R("inclusion", False, f"leaf {lid} does not fold to the anchored root")); break
+    if inc_ok:
+        res.append(R("inclusion", True, f"content + {len(records)} record(s) fold to the anchored root"))
+
+    # (3) ISSUER SIGNATURE over the signed root header (binds root AND leaf vector)
     kp = capsule["key_provenance"]
+    header = {"root_hash": root_hash, "merkle_alg": root.get("merkle_alg", "sha256"),
+              "leaf_ids": committed, "leaf_count": root.get("leaf_count")}
     issuer_authenticated = False
-    if not ed25519_verify(kp.get("issuer_pubkey", ""), root_hash.encode(),
-                          kp.get("issuer_signature", "")):
-        res.append(R("issuer_signature", False, "issuer signature does not verify over root_hash"))
+    if not ed25519_verify(kp.get("issuer_pubkey", ""), cbytes(header), kp.get("issuer_signature", "")):
+        res.append(R("issuer_signature", False, "issuer signature does not verify over the signed root header"))
     elif expected_issuer is None:
         res.append(R("issuer_signature", True,
-                     f"self-asserted key for issuer {kp.get('issuer_id')!r} "
-                     "(no expected issuer pinned; identity UNVERIFIED)"))
+                     f"self-asserted key for issuer {kp.get('issuer_id')!r} (no expected issuer pinned; identity UNVERIFIED)"))
     elif kp.get("issuer_pubkey", "").lower() == expected_issuer.lower():
         issuer_authenticated = True
-        res.append(R("issuer_signature", True,
-                     f"authenticated as the expected issuer {kp.get('issuer_id')!r}"))
+        res.append(R("issuer_signature", True, f"authenticated as the expected issuer {kp.get('issuer_id')!r}"))
     else:
         res.append(R("issuer_signature", False,
-                     "authenticated key does NOT match the expected issuer pinned "
-                     "out of band (issuer-key substitution)"))
+                     "authenticated key does NOT match the expected issuer pinned out of band (issuer-key substitution)"))
 
-    # 4. anchors — any durable witness?
-    durable = False
-    any_anchor_ok = False
-    for a in capsule["anchors"]:
-        msg = cbytes({"root": a.get("root"), "witness": a.get("witness"),
-                      "observed_at": a.get("observed_at")})
-        ok = (a.get("root") == root_hash) and ed25519_verify(a.get("anchor_pubkey", ""), msg,
-                                                             a.get("anchor_signature", ""))
-        if ok:
-            any_anchor_ok = True
-            if a.get("witness") in DURABLE_WITNESSES:
-                durable = True
-    res.append(R("anchor", any_anchor_ok,
-                 ("durable witness verified" if durable else
-                  "anchor verifies but witness is self-asserted (not in durable set)")
-                 if any_anchor_ok else "no anchor signature verifies over root"))
+    # (1) ANCHORS — durable only when the witness key is pinned out of band
+    res.append(_anchor_result(capsule, root_hash, expected_witnesses))
 
-    # 5. re-stamp trail + crypto horizon
-    stamps = capsule["timestamps"]
-    horizons = capsule["trust_horizons"]
-    stamps_ok = True
-    for s in stamps:
-        hash_part = s.get("alg", "").split("+")[0]
-        try:
-            digest = h_alg(hash_part, root_hash.encode())
-        except ValueError as e:
-            stamps_ok = False
-            res.append(R("restamp_trail", False, str(e))); break
-        ok = (digest == s.get("digest")) and ed25519_verify(
-            s.get("pubkey", ""), s.get("digest", "").encode(), s.get("signature", ""))
+    # (4) HASH-TREE RENEWAL chain — verify each renewal folds under its own hash,
+    #     chains to the prior root, and is signed; track the effective tree.
+    renewals = capsule.get("tree_renewals", [])
+    tree_alg = root.get("merkle_alg", "sha256")
+    eff_root = root_hash
+    renewal_ok = True
+    renewer_authenticated = True  # vacuously true when there are no renewals
+    prev = root_hash
+    for i, rn in enumerate(renewals):
+        alg = rn.get("merkle_alg")
+        if rn.get("leaf_ids") != present_ids or rn.get("leaf_count") != len(present_ids):
+            renewal_ok = False; res.append(R("tree_renewal", False, f"renewal {i}: leaf vector mismatch")); break
+        rproofs = rn.get("inclusion_proofs", {})
+        ok = True
+        for o in objs:
+            lid = o.get("id")
+            if lid not in rproofs or fold(leaf_hash(o, alg), rproofs[lid], alg) != rn.get("root_hash"):
+                ok = False; break
         if not ok:
-            stamps_ok = False
-            res.append(R("restamp_trail", False, f"stamp alg={s.get('alg')} failed")); break
-    restamp_needed = False
-    newest_alg = None
-    if stamps_ok and stamps:
-        newest = sorted(stamps, key=lambda s: _iso(s["stamped_at"]))[-1]
-        newest_alg = newest.get("alg")
-        hash_part = newest_alg.split("+")[0]
-        horizon = horizons.get(hash_part) or horizons.get(newest_alg)
-        if horizon and _iso(horizon) < now:
-            restamp_needed = True
-        res.append(R("restamp_trail", True,
-                     f"{len(stamps)} stamp(s); newest {newest_alg} horizon {horizon}"
-                     + ("  PAST HORIZON" if restamp_needed else "")))
-    elif stamps_ok:
-        res.append(R("restamp_trail", False, "no timestamps present"))
-        stamps_ok = False
+            renewal_ok = False; res.append(R("tree_renewal", False, f"renewal {i}: leaves do not fold under {alg}")); break
+        if rn.get("prev_root") != prev:
+            renewal_ok = False; res.append(R("tree_renewal", False, f"renewal {i}: broken chain to prior root")); break
+        rheader = {"root_hash": rn.get("root_hash"), "merkle_alg": alg,
+                   "leaf_ids": rn.get("leaf_ids"), "leaf_count": rn.get("leaf_count"), "prev_root": prev}
+        if not ed25519_verify(rn.get("renewer_pubkey", ""), cbytes(rheader), rn.get("renewer_signature", "")):
+            renewal_ok = False; res.append(R("tree_renewal", False, f"renewal {i}: renewer signature invalid")); break
+        rk = rn.get("renewer_pubkey", "").lower()
+        this_auth = (rk == kp.get("issuer_pubkey", "").lower()) or \
+                    (expected_renewer is not None and rk == expected_renewer.lower())
+        renewer_authenticated = this_auth  # only the latest one matters for the verdict
+        prev = rn.get("root_hash"); tree_alg = alg; eff_root = rn.get("root_hash")
+    if renewals and renewal_ok:
+        res.append(R("tree_renewal", True, f"{len(renewals)} hash-tree renewal(s); effective tree hash {tree_alg}"))
 
-    # 6. precedence
+    # (2) TIMESTAMP TRAIL — envelope-signed; stampers count toward currency only if pinned
+    stamps = capsule["timestamps"]
+    stamp_broken = False
+    counting = []
+    if not stamps:
+        stamp_broken = True; res.append(R("restamp_trail", False, "no timestamps present"))
+    for s in stamps:
+        hp = s.get("alg", "").split("+")[0]
+        covered = s.get("root", root_hash)
+        try:
+            digest = h_alg(hp, covered.encode())
+        except ValueError as e:
+            stamp_broken = True; res.append(R("restamp_trail", False, str(e))); break
+        env = {"alg": s.get("alg"), "stamped_at": s.get("stamped_at"),
+               "digest": s.get("digest"), "root": covered}
+        if digest != s.get("digest") or not ed25519_verify(s.get("pubkey", ""), cbytes(env), s.get("signature", "")):
+            stamp_broken = True
+            res.append(R("restamp_trail", False, f"stamp alg={s.get('alg')} fails (digest or envelope signature)")); break
+        if expected_stampers is None or s.get("pubkey", "").lower() in expected_stampers:
+            counting.append(s)
+
+    # currency: a counting stamp over the CURRENT effective root, under an in-horizon alg
+    horizons = capsule["trust_horizons"]
+    def in_horizon(alg_name):
+        hz = horizons.get(alg_name.split("+")[0]) or horizons.get(alg_name)
+        return (hz is not None) and (_iso(hz) > now)
+    stamp_current = any(s.get("root", root_hash) == eff_root and in_horizon(s.get("alg", ""))
+                        for s in counting)
+    tree_in_horizon = in_horizon(tree_alg)
+    restamp_needed = (not stamp_current) or (not tree_in_horizon)
+    stamper_authenticated = (expected_stampers is not None) and stamp_current
+
+    if not stamp_broken:
+        why = []
+        if not tree_in_horizon: why.append(f"tree hash {tree_alg} past horizon (renew-tree)")
+        if not stamp_current: why.append("no current pinned timestamp over the effective root (re-stamp)")
+        res.append(R("restamp_trail", True,
+                     (f"{len(stamps)} stamp(s); " + ("; ".join(why) if why else f"current under {tree_alg}"))))
+
+    # precedence
     all_pass = all(r.ok for r in res)
     if not all_pass:
         return "WITHHELD", res
     if restamp_needed:
         return "RESTAMP_NEEDED", res
-    if durable and issuer_authenticated:
+    durable = _durable(capsule, root_hash, expected_witnesses)
+    if durable and issuer_authenticated and stamper_authenticated and renewer_authenticated:
         return "VERIFIED", res
     return "SELF_CONSISTENT", res
+
+
+def _durable(capsule, root_hash, expected_witnesses):
+    for a in capsule["anchors"]:
+        env = {"root": a.get("root"), "witness": a.get("witness"), "observed_at": a.get("observed_at")}
+        if a.get("root") == root_hash and ed25519_verify(a.get("anchor_pubkey", ""), cbytes(env), a.get("anchor_signature", "")):
+            w = a.get("witness")
+            if w in DURABLE_WITNESSES and expected_witnesses.get(w) == a.get("anchor_pubkey", "").lower():
+                return True
+    return False
+
+
+# anchor check must also populate a result line; done inside verify via a helper pass.
+def _anchor_result(capsule, root_hash, expected_witnesses):
+    any_ok = False; broken = False; durable = False
+    for a in capsule["anchors"]:
+        env = {"root": a.get("root"), "witness": a.get("witness"), "observed_at": a.get("observed_at")}
+        sig_ok = ed25519_verify(a.get("anchor_pubkey", ""), cbytes(env), a.get("anchor_signature", ""))
+        if not sig_ok:
+            broken = True; continue
+        if a.get("root") == root_hash:
+            any_ok = True
+            w = a.get("witness")
+            if w in DURABLE_WITNESSES and expected_witnesses.get(w) == a.get("anchor_pubkey", "").lower():
+                durable = True
+    if broken:
+        return R("anchor", False, "an anchor signature does not verify over its envelope")
+    if not any_ok:
+        return R("anchor", False, "no anchor binds the root")
+    return R("anchor", True, "durable witness pinned and verified" if durable
+             else "anchor verifies, but the witness is self-asserted or its key is not pinned (not durable)")
 
 
 EXIT = {"VERIFIED": 0, "WITHHELD": 1, "FAILED": 2, "SELF_CONSISTENT": 3, "RESTAMP_NEEDED": 4}
 
 
 def render(verdict, res, path):
-    print(f"capsule_verify.py  ·  {path}  ·  engine imports: none")
+    print(f"capsule_verify.py  ·  {path}  ·  engine imports: none  ·  spec {SPEC_VERSION}")
     print("-" * 74)
     for r in res:
         print(r)
     print("-" * 74)
     msg = {
-        "VERIFIED": "checks pass, a durable witness anchors the root, and the key is authenticated as the expected issuer",
-        "WITHHELD": "a check failed; tampered or malformed; no confident answer by design",
-        "FAILED": "not parseable as a Continuum Evidence Capsule",
-        "SELF_CONSISTENT": "internally self-verifying, but not bound to BOTH a durable witness and an expected issuer; self-consistent, not authenticated",
-        "RESTAMP_NEEDED": "self-verifying, but newest crypto is past its trust horizon; re-stamp before trusting",
+        "VERIFIED": "all checks pass; a PINNED durable witness anchors the root, the issuer and the current timestamp are authenticated out of band, and both the tree hash and the timestamp are within horizon",
+        "WITHHELD": "a check failed; tampered, incomplete, or malformed; no confident answer by design",
+        "FAILED": "not parseable as a Continuum Evidence Capsule 0.2",
+        "SELF_CONSISTENT": "internally self-verifying, but not bound to a pinned durable witness and/or an authenticated issuer and timestamp; self-consistent, not authenticated",
+        "RESTAMP_NEEDED": "self-verifying, but the tree hash and/or the newest timestamp is past its trust horizon; renew before trusting",
     }[verdict]
     print(f"VERDICT: {verdict}   {msg}")
     return verdict
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Offline verifier for a Continuum Evidence Capsule")
+    ap = argparse.ArgumentParser(description="Offline verifier for a Continuum Evidence Capsule (0.2)")
     ap.add_argument("capsule")
     ap.add_argument("--quiet", action="store_true")
-    ap.add_argument("--now", help="override 'now' as ISO (for testing crypto horizons)")
-    ap.add_argument("--expected-issuer",
-                    help="hex Ed25519 public key of the expected issuer, pinned out of band; "
-                         "required for a VERIFIED verdict (otherwise the issuer is UNVERIFIED)")
+    ap.add_argument("--now", help="override 'now' as ISO (for testing horizons)")
+    ap.add_argument("--expected-issuer", help="hex Ed25519 public key of the expected issuer, pinned out of band")
+    ap.add_argument("--expected-witness", action="append", default=[],
+                    help="NAME=HEX pinned durable-witness key (repeatable); required for a durable verdict")
+    ap.add_argument("--expected-stamper", action="append", default=[],
+                    help="hex pinned timestamp-authority key (repeatable); required for a VERIFIED verdict")
+    ap.add_argument("--expected-renewer", help="hex pinned hash-tree renewer key (if not the issuer)")
     args = ap.parse_args()
     try:
         with open(args.capsule) as f:
@@ -229,7 +315,10 @@ def main():
             print(f"FAILED to load {args.capsule}: {e}")
         sys.exit(2)
     now = _iso(args.now) if args.now else None
-    verdict, res = verify(cap, now=now, expected_issuer=args.expected_issuer)
+    verdict, res = verify(cap, now=now, expected_issuer=args.expected_issuer,
+                          expected_witnesses=_pin_map(args.expected_witness),
+                          expected_stampers=args.expected_stamper or None,
+                          expected_renewer=args.expected_renewer)
     if not args.quiet:
         render(verdict, res, args.capsule)
     sys.exit(EXIT[verdict])
