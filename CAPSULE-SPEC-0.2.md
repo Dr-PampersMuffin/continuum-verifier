@@ -28,7 +28,9 @@ changes are listed at the end.
 - `tree_renewals[]` — the hash-tree-renewal chain (may be empty). Each entry
   rebuilds the tree over the same leaf data under a new hash, chains to the prior
   root, and is signed by a renewer key.
-- `trust_horizons` — the honest date each algorithm stops being trusted.
+- `trust_horizons` — ADVISORY only. A hint of when each algorithm stops being
+  trusted. The verifier does not use it; horizons are the verifier's own policy,
+  held out of band (see step 8). Editing this field cannot change a verdict.
 
 ## Canonical form and primitives
 
@@ -90,9 +92,12 @@ breaks the check.
    toward currency only if its key matches `--expected-stamper` (when pins are
    supplied). A stamp is **current** if it covers the effective tree root and its
    algorithm's horizon is in the future.
-8. **Horizons.** `RESTAMP_NEEDED` if the effective tree hash is past its horizon
-   (needs `renew-tree`) OR there is no current pinned timestamp over the effective
-   root (needs `restamp`).
+8. **Horizons.** Trust horizons come from the **verifier's policy**, held out of
+   band (built-in defaults, overridable per relying party). The `trust_horizons`
+   field inside the capsule is advisory and is NOT read for the verdict, so a
+   tampered horizon cannot revive stale crypto. `RESTAMP_NEEDED` if, under that
+   policy, the effective tree hash is past its horizon (needs `renew-tree`) OR there
+   is no current pinned timestamp over the effective root (needs `restamp`).
 9. **Verdict precedence.** WITHHELD (any check failed) > RESTAMP_NEEDED (past a
    horizon) > VERIFIED (all checks pass AND a pinned durable witness verified AND
    the issuer is authenticated AND a pinned current timestamp exists AND, if there
@@ -132,3 +137,10 @@ Exit codes: 0 VERIFIED, 1 WITHHELD, 2 FAILED, 3 SELF_CONSISTENT, 4 RESTAMP_NEEDE
    the verdict.
 4. Hash-tree renewal is a first-class, verified, chained operation, separate from
    timestamp renewal, and the verifier checks the tree-hash horizon.
+
+## 0.2.1 (verifier hardening, no capsule-format change)
+
+5. Trust horizons are verifier policy, held out of band, not read from the capsule.
+   A 0.2 capsule is unaffected; the `trust_horizons` field it carries is now treated
+   as advisory and ignored, closing an edit that could revive expired crypto to
+   VERIFIED when every key was pinned.

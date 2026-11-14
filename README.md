@@ -21,8 +21,8 @@ directory that holds nothing but the verifier and a capsule.
 python3 capsule_verify.py samples/sample_capsule_durable.json
 
 # run the adversarial suite: clean capsules + every tamper + the renewal paths
-# + the four external-review boundary regressions
-python3 attack_capsule.py        # 27/27 expected
+# + the external-review boundary regressions
+python3 attack_capsule.py        # 30/30 expected
 
 # make your own capsule
 python3 capsule_pack.py mycap.json --witness nist-beacon
@@ -66,6 +66,11 @@ key from outside the file, pinned out of band:
 
 This rule is uniform: issuer, witness, and stamper are all authenticated the same
 way, or not at all.
+
+**Trust horizons are policy, not payload.** When each algorithm stops being trusted
+is the verifier's decision, held out of band, with built-in defaults and an optional
+`--horizon NAME=ISO` override. Any `trust_horizons` value carried inside a capsule is
+advisory and ignored, so editing it cannot revive stale crypto.
 
 ## What it proves, and what it does not
 
@@ -111,6 +116,11 @@ each now a named regression in `attack_capsule.py`:
    SHA-256 tree in place (RFC 4998 §5.2 distinguishes the two). Fixed: the verifier
    checks the tree hash horizon as well, and `--mode renew-tree` rebuilds the tree
    under a fresh hash, chained to the old root.
+
+5. **Trust horizons were attacker-controlled.** The verifier read `trust_horizons`
+   from the capsule, so with every key pinned, editing a horizon to a far-future
+   date revived expired crypto to VERIFIED. Fixed: horizons are verifier policy
+   (built-in defaults, `--horizon` to override); the capsule's copy is ignored.
 
 See `CAPSULE-SPEC-0.2.md` for the full, language-agnostic verification algorithm.
 

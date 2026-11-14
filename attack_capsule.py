@@ -156,6 +156,20 @@ check("K4 restamp-only past tree horizon", "RESTAMP_NEEDED",
 check("K4 hash-tree renewal past horizon", "VERIFIED",
       verify(k4_tree, now=future, **pins(k4_tree))[0], "tree rebuilt under sha3_512")
 
+# K5: trust_horizons is verifier policy, not a capsule field an attacker can edit
+k5a = copy.deepcopy(expired)
+k5a["trust_horizons"]["sha1"] = "2099-01-01T00:00:00Z"
+check("K5a sha1 horizon edited to 2099", "RESTAMP_NEEDED", verify(k5a, **pins(expired))[0],
+      "capsule horizon ignored; policy governs")
+k5b = RS.restamp(copy.deepcopy(durable), alg="sha3_512+ed25519")
+k5b["trust_horizons"]["sha256"] = "2099-01-01T00:00:00Z"
+check("K5b sha256 horizon edited, @2040", "RESTAMP_NEEDED",
+      verify(k5b, now=future, **pins(k5b))[0], "capsule horizon ignored; policy governs")
+# and a verifier-policy override is honoured (out of band), proving the knob still exists
+check("K5c policy override extends sha256 to 2099", "VERIFIED",
+      verify(durable, now=future, horizons={"sha256": "2099-01-01T00:00:00Z"}, **pins(durable))[0],
+      "horizon set by the verifier, not the file")
+
 print("\n" + "="*78)
 print(f"SUMMARY: {sum(RESULTS)}/{len(RESULTS)} behaved as expected")
 sys.exit(0 if all(RESULTS) else 1)

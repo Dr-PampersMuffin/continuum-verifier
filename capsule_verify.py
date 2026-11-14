@@ -27,8 +27,15 @@ from cryptography.exceptions import InvalidSignature
 
 SPEC_VERSION = "0.2"
 DURABLE_WITNESSES = {"bitcoin-ots", "ct-log", "nist-beacon"}
+# Trust horizons are the VERIFIER's policy, held out of band, NOT read from the
+# capsule. A capsule may carry an advisory `trust_horizons` hint, but it is ignored
+# for the verdict: a tampered hint must not be able to revive stale crypto.
+DEFAULT_HORIZONS = {"md5": "2010-01-01T00:00:00Z", "sha1": "2017-01-01T00:00:00Z",
+                    "sha256": "2035-01-01T00:00:00Z", "sha384": "2045-01-01T00:00:00Z",
+                    "sha512": "2050-01-01T00:00:00Z", "sha3_256": "2045-01-01T00:00:00Z",
+                    "sha3_512": "2050-01-01T00:00:00Z"}
 REQUIRED = {"capsule_version", "content", "consent_chain", "root",
-            "key_provenance", "anchors", "timestamps", "trust_horizons"}
+            "key_provenance", "anchors", "timestamps"}
 
 
 def cbytes(obj) -> bytes:
@@ -87,8 +94,10 @@ def _pin_map(pairs):
 
 
 def verify(capsule, now=None, expected_issuer=None,
-           expected_witnesses=None, expected_stampers=None, expected_renewer=None):
+           expected_witnesses=None, expected_stampers=None, expected_renewer=None,
+           horizons=None):
     now = now or datetime.now(timezone.utc)
+    policy = {**DEFAULT_HORIZONS, **(horizons or {})}
     expected_witnesses = {k: v.lower() for k, v in (expected_witnesses or {}).items()}
     expected_stampers = set(s.lower() for s in expected_stampers) if expected_stampers else None
     res = []
@@ -214,10 +223,10 @@ def verify(capsule, now=None, expected_issuer=None,
         if expected_stampers is None or s.get("pubkey", "").lower() in expected_stampers:
             counting.append(s)
 
-    # currency: a counting stamp over the CURRENT effective root, under an in-horizon alg
-    horizons = capsule["trust_horizons"]
+    # currency: a counting stamp over the CURRENT effective root, under an in-horizon alg.
+    # Horizons come from verifier POLICY (out of band), never from the capsule.
     def in_horizon(alg_name):
-        hz = horizons.get(alg_name.split("+")[0]) or horizons.get(alg_name)
+        hz = policy.get(alg_name.split("+")[0]) or policy.get(alg_name)
         return (hz is not None) and (_iso(hz) > now)
     stamp_current = any(s.get("root", root_hash) == eff_root and in_horizon(s.get("alg", ""))
                         for s in counting)
@@ -231,6 +240,9 @@ def verify(capsule, now=None, expected_issuer=None,
         if not stamp_current: why.append("no current pinned timestamp over the effective root (re-stamp)")
         res.append(R("restamp_trail", True,
                      (f"{len(stamps)} stamp(s); " + ("; ".join(why) if why else f"current under {tree_alg}"))))
+
+    res.append(R("trust_horizons", True,
+                 "horizons from verifier policy; any value carried in the capsule is advisory and ignored"))
 
     # precedence
     all_pass = all(r.ok for r in res)
@@ -306,7 +318,13 @@ def main():
     ap.add_argument("--expected-stamper", action="append", default=[],
                     help="hex pinned timestamp-authority key (repeatable); required for a VERIFIED verdict")
     ap.add_argument("--expected-renewer", help="hex pinned hash-tree renewer key (if not the issuer)")
+    ap.add_argument("--horizon", action="append", default=[],
+                    help="NAME=ISO trust-horizon override, held as verifier policy (repeatable); "
+                         "defaults are built in and any horizon inside the capsule is ignored")
     args = ap.parse_args()
+    horizons = {}
+    for p in args.horizon:
+        k, _, v = p.partition("="); horizons[k.strip()] = v.strip()
     try:
         with open(args.capsule) as f:
             cap = json.load(f)
@@ -318,7 +336,8 @@ def main():
     verdict, res = verify(cap, now=now, expected_issuer=args.expected_issuer,
                           expected_witnesses=_pin_map(args.expected_witness),
                           expected_stampers=args.expected_stamper or None,
-                          expected_renewer=args.expected_renewer)
+                          expected_renewer=args.expected_renewer,
+                          horizons=horizons or None)
     if not args.quiet:
         render(verdict, res, args.capsule)
     sys.exit(EXIT[verdict])
