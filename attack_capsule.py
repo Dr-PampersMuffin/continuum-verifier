@@ -170,6 +170,35 @@ check("K5c policy override extends sha256 to 2099", "VERIFIED",
       verify(durable, now=future, horizons={"sha256": "2099-01-01T00:00:00Z"}, **pins(durable))[0],
       "horizon set by the verifier, not the file")
 
+print("\nRENEWAL ORDERING, ROLLBACK, WEAK-ALG REFUSAL (collaborative review, Nov 2026)")
+# K6: a renewal dated before the root it renews must be rejected (times are signed)
+k6 = RS.renew_tree(copy.deepcopy(durable), P.sample_records(), content, alg="sha3_512",
+                   at="2000-01-01T00:00:00Z")
+check("K6 renewal predates its root", "WITHHELD", verify(k6, **pins(k6))[0],
+      "renewed_at is inside the signed header and ordered")
+
+# K7: anti-rollback. Pin the newest root; a truncated prefix fails closed.
+renewed = RS.renew_tree(copy.deepcopy(durable), P.sample_records(), content, alg="sha3_512")
+newest_root = renewed["tree_renewals"][-1]["root_hash"]
+check("K7a pinned newest root present", "VERIFIED",
+      verify(renewed, expected_newest=newest_root, **pins(renewed))[0])
+check("K7b rolled-back prefix, newest root pinned", "WITHHELD",
+      verify(durable, expected_newest=newest_root, **pins(durable))[0],
+      "durable lacks the pinned renewal root")
+
+# K8: weak/unknown hash refused at renewal time, before any work
+def _raises(fn):
+    try:
+        fn(); return "allowed"
+    except ValueError:
+        return "refused"
+check("K8a renew-tree refuses sha1", "refused",
+      _raises(lambda: RS.renew_tree(copy.deepcopy(durable), P.sample_records(), content, alg="sha1")))
+check("K8b restamp refuses md5", "refused",
+      _raises(lambda: RS.restamp(copy.deepcopy(durable), alg="md5+ed25519")))
+check("K8c renew-tree refuses unknown alg", "refused",
+      _raises(lambda: RS.renew_tree(copy.deepcopy(durable), P.sample_records(), content, alg="foo-256")))
+
 print("\n" + "="*78)
 print(f"SUMMARY: {sum(RESULTS)}/{len(RESULTS)} behaved as expected")
 sys.exit(0 if all(RESULTS) else 1)

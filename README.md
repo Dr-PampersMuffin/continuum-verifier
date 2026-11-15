@@ -22,7 +22,7 @@ python3 capsule_verify.py samples/sample_capsule_durable.json
 
 # run the adversarial suite: clean capsules + every tamper + the renewal paths
 # + the external-review boundary regressions
-python3 attack_capsule.py        # 30/30 expected
+python3 attack_capsule.py        # 36/36 expected
 
 # make your own capsule
 python3 capsule_pack.py mycap.json --witness nist-beacon
@@ -121,6 +121,14 @@ each now a named regression in `attack_capsule.py`:
    from the capsule, so with every key pinned, editing a horizon to a far-future
    date revived expired crypto to VERIFIED. Fixed: horizons are verifier policy
    (built-in defaults, `--horizon` to override); the capsule's copy is ignored.
+
+6. **Renewal hardening (from a shared renewal vector with proofbundle).** `renewed_at`
+   is now inside the renewer's signature; the verifier checks renewal/stamp **ordering**
+   (a renewal dated before the root it renews is WITHHELD); an optional
+   `--expect-newest-root` pin fails closed on a **rolled-back** prefix; and the packer
+   tools **refuse** `sha1`, `md5`, and unknown hashes at renewal time. A known honest
+   limit remains: a hash-tree renewal re-digests the leaf objects, but the content leaf
+   still binds the external content through its `sha256` fingerprint.
 
 See `CAPSULE-SPEC-0.2.md` for the full, language-agnostic verification algorithm.
 

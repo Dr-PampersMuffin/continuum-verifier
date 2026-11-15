@@ -95,7 +95,7 @@ def _pin_map(pairs):
 
 def verify(capsule, now=None, expected_issuer=None,
            expected_witnesses=None, expected_stampers=None, expected_renewer=None,
-           horizons=None):
+           horizons=None, expected_newest=None):
     now = now or datetime.now(timezone.utc)
     policy = {**DEFAULT_HORIZONS, **(horizons or {})}
     expected_witnesses = {k: v.lower() for k, v in (expected_witnesses or {}).items()}
@@ -191,7 +191,8 @@ def verify(capsule, now=None, expected_issuer=None,
         if rn.get("prev_root") != prev:
             renewal_ok = False; res.append(R("tree_renewal", False, f"renewal {i}: broken chain to prior root")); break
         rheader = {"root_hash": rn.get("root_hash"), "merkle_alg": alg,
-                   "leaf_ids": rn.get("leaf_ids"), "leaf_count": rn.get("leaf_count"), "prev_root": prev}
+                   "leaf_ids": rn.get("leaf_ids"), "leaf_count": rn.get("leaf_count"),
+                   "prev_root": prev, "renewed_at": rn.get("renewed_at")}
         if not ed25519_verify(rn.get("renewer_pubkey", ""), cbytes(rheader), rn.get("renewer_signature", "")):
             renewal_ok = False; res.append(R("tree_renewal", False, f"renewal {i}: renewer signature invalid")); break
         rk = rn.get("renewer_pubkey", "").lower()
@@ -243,6 +244,40 @@ def verify(capsule, now=None, expected_issuer=None,
 
     res.append(R("trust_horizons", True,
                  "horizons from verifier policy; any value carried in the capsule is advisory and ignored"))
+
+    # ordering: renewal times are signed (inside the renewer header) and must be
+    # coherent. A renewal cannot predate the root it renews; a stamp cannot predate
+    # the renewal it covers.
+    def _t(x):
+        try:
+            return _iso(x)
+        except Exception:
+            return None
+    orig_pts = [_t(s.get("stamped_at")) for s in stamps if s.get("root", root_hash) == root_hash]
+    orig_pts += [_t(a.get("observed_at")) for a in capsule["anchors"] if a.get("root") == root_hash]
+    orig_pts = [t for t in orig_pts if t is not None]
+    order_ok = True
+    order_detail = "renewal and stamp times are coherent"
+    prev_t = min(orig_pts) if orig_pts else None
+    for i, rn in enumerate(renewals):
+        rt = _t(rn.get("renewed_at"))
+        if rt is None:
+            order_ok = False; order_detail = f"renewal {i} has no parseable renewed_at"; break
+        if prev_t is not None and rt < prev_t:
+            order_ok = False; order_detail = f"renewal {i} is dated before the root it renews"; break
+        if any(s.get("root") == rn.get("root_hash") and (_t(s.get("stamped_at")) or rt) < rt for s in stamps):
+            order_ok = False; order_detail = f"a stamp over renewal {i} predates the renewal"; break
+        prev_t = rt
+    res.append(R("ordering", order_ok, order_detail))
+
+    # anti-rollback: a relying party may pin the newest root it knows exists; if that
+    # root is absent here, this capsule may be a truncated/rolled-back prefix.
+    if expected_newest is not None:
+        known = {r.lower() for r in ([root_hash] + [rn.get("root_hash") for rn in renewals]) if r}
+        rb_ok = expected_newest.lower() in known
+        res.append(R("no_rollback", rb_ok,
+                     "pinned newest root present" if rb_ok else
+                     "pinned newest root absent: possible truncation to an older prefix (fail-closed)"))
 
     # precedence
     all_pass = all(r.ok for r in res)
@@ -321,6 +356,9 @@ def main():
     ap.add_argument("--horizon", action="append", default=[],
                     help="NAME=ISO trust-horizon override, held as verifier policy (repeatable); "
                          "defaults are built in and any horizon inside the capsule is ignored")
+    ap.add_argument("--expect-newest-root",
+                    help="hex of the newest root the relying party knows exists; if absent from the "
+                         "capsule, verification fails closed on a possible rollback")
     args = ap.parse_args()
     horizons = {}
     for p in args.horizon:
@@ -337,7 +375,8 @@ def main():
                           expected_witnesses=_pin_map(args.expected_witness),
                           expected_stampers=args.expected_stamper or None,
                           expected_renewer=args.expected_renewer,
-                          horizons=horizons or None)
+                          horizons=horizons or None,
+                          expected_newest=args.expect_newest_root)
     if not args.quiet:
         render(verdict, res, args.capsule)
     sys.exit(EXIT[verdict])

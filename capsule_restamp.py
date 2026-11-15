@@ -31,6 +31,21 @@ def pk_hex(sk):
         encoding=serialization.Encoding.Raw, format=serialization.PublicFormat.Raw).hex()
 
 
+import hashlib
+_WEAK = {"md5", "sha1"}
+
+
+def _reject_weak(alg):
+    """Refuse a deprecated or unknown hash at renewal time, before any work
+    (mirrors proofbundle's build-time refusal). Weak crypto must not enter a
+    renewal; horizon policy at verify time is the backstop, not the gate."""
+    hp = alg.split("+")[0]
+    if hp in _WEAK:
+        raise ValueError(f"refusing deprecated hash at renewal: {hp}")
+    if hp not in hashlib.algorithms_available:
+        raise ValueError(f"refusing unknown hash at renewal: {hp}")
+
+
 def effective_root(capsule):
     """The root the capsule's integrity currently hangs on: the newest tree
     renewal's root, or the original root_hash if there are none."""
@@ -40,6 +55,7 @@ def effective_root(capsule):
 
 def restamp(capsule, alg="sha3_512+ed25519", at=None, stamper=None):
     """Timestamp renewal: stamp the CURRENT effective root under a fresh alg."""
+    _reject_weak(alg)
     sk = stamper or Ed25519PrivateKey.generate()
     root = effective_root(capsule)
     capsule["timestamps"].append(P.make_stamp(sk, root, alg, at=at))
@@ -54,6 +70,7 @@ def renew_tree(capsule, records, content, alg="sha3_512", renewer=None, at=None,
     `alg`, chain it to the previous root, sign the new header with a renewer key.
     The caller passes the same records/content the capsule was built from (the leaf
     data a renewer legitimately holds)."""
+    _reject_weak(alg)
     sk = renewer or Ed25519PrivateKey.generate()
     objs = P.leaf_objects(records, content)
     leaf_ids = [o["id"] for o in objs]
@@ -61,11 +78,12 @@ def renew_tree(capsule, records, content, alg="sha3_512", renewer=None, at=None,
     new_root, proofs = P.build_merkle(leaves, alg)
     inclusion = {leaf_ids[i]: proofs[i] for i in range(len(objs))}
     prev = effective_root(capsule)
-    header = {"root_hash": new_root, "merkle_alg": alg,
-              "leaf_ids": leaf_ids, "leaf_count": len(leaf_ids), "prev_root": prev}
+    ts = at or now_iso()
+    # renewed_at is inside the signed header, so the renewal time is not malleable
+    header = {"root_hash": new_root, "merkle_alg": alg, "leaf_ids": leaf_ids,
+              "leaf_count": len(leaf_ids), "prev_root": prev, "renewed_at": ts}
     entry = dict(header,
                  inclusion_proofs=inclusion,
-                 renewed_at=at or now_iso(),
                  renewer_pubkey=pk_hex(sk),
                  renewer_signature=sk.sign(P.cbytes(header)).hex())
     capsule.setdefault("tree_renewals", []).append(entry)

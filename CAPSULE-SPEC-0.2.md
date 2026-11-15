@@ -53,6 +53,26 @@ Because the ordered leaf vector is signed, the presented records must reproduce 
 exactly. Omitting or duplicating a record changes `leaf_ids` or its length and
 breaks the check.
 
+## Exact byte forms (so an independent reader needs no source)
+
+- **Content leaf.** The content object becomes a leaf by adding two fields:
+  `id = "CONTENT"` and `type = "CONTENT_COMMITMENT"`. Both are present when it is
+  canonicalized and hashed.
+- **Leaf hash.** `leaf = H_alg(canonical(leaf_object))`, `alg` = the tree's
+  `merkle_alg`.
+- **Merkle fold over hex text.** Siblings are hex strings and are concatenated AS
+  TEXT, then UTF-8 encoded, then hashed: `side=L -> H_alg((sibling + h).encode())`,
+  `side=R -> H_alg((h + sibling).encode())`. The raw digest bytes are not
+  concatenated; the hex strings are.
+- **Anchor signature.** An anchor signs canonical `{root, witness, observed_at}`.
+- **Timestamp.** `digest = H_hashpart(root.encode())` where `root` is the hex string
+  of the covered root and `hashpart` is the part of `alg` before `+`. The stamp signs
+  canonical `{alg, stamped_at, digest, root}`, so the stamp time and covered root are
+  inside the signature.
+- **Hash-tree renewal.** The renewer signs canonical `{root_hash, merkle_alg,
+  leaf_ids, leaf_count, prev_root, renewed_at}`. `renewed_at` is inside the signature,
+  so the renewal time is not malleable.
+
 ## Verification algorithm (language-agnostic; re-implement anywhere)
 
 1. **Version / structure.** `capsule_version` must be `0.2`, else WITHHELD.
@@ -82,7 +102,7 @@ breaks the check.
    presented set; check `prev_root` equals the previous effective root (the
    original `root_hash` for the first entry); Ed25519-verify `renewer_signature`
    over the entry's header `{root_hash, merkle_alg, leaf_ids, leaf_count,
-   prev_root}`. Any failure -> WITHHELD. The **effective tree** is the newest valid
+   prev_root, renewed_at}`. Any failure -> WITHHELD. The **effective tree** is the newest valid
    renewal (or the original tree if none); its hash is the **effective tree hash**.
    For VERIFIED, the newest renewer key must be the issuer key or match
    `--expected-renewer`.
@@ -98,6 +118,16 @@ breaks the check.
    tampered horizon cannot revive stale crypto. `RESTAMP_NEEDED` if, under that
    policy, the effective tree hash is past its horizon (needs `renew-tree`) OR there
    is no current pinned timestamp over the effective root (needs `restamp`).
+8b. **Ordering.** Renewal and stamp times must be coherent. Because `renewed_at`
+   (renewal) and `stamped_at` (stamp) are inside signatures, they are authenticated.
+   A renewal must not be dated before the root it renews (its `renewed_at` is at or
+   after the earliest signed time over the prior root), renewals are non-decreasing in
+   time, and a stamp over a renewal root is at or after that renewal. Any violation
+   -> WITHHELD.
+8c. **Rollback (optional, fail-closed).** A relying party may pin
+   `expected_newest`, the hex of the newest root it knows exists. If that root is not
+   present among the capsule's roots (original plus every renewal), the capsule may be
+   a truncated or rolled-back prefix -> WITHHELD. Absent the pin, this check is skipped.
 9. **Verdict precedence.** WITHHELD (any check failed) > RESTAMP_NEEDED (past a
    horizon) > VERIFIED (all checks pass AND a pinned durable witness verified AND
    the issuer is authenticated AND a pinned current timestamp exists AND, if there
@@ -144,3 +174,20 @@ Exit codes: 0 VERIFIED, 1 WITHHELD, 2 FAILED, 3 SELF_CONSISTENT, 4 RESTAMP_NEEDE
    A 0.2 capsule is unaffected; the `trust_horizons` field it carries is now treated
    as advisory and ignored, closing an edit that could revive expired crypto to
    VERIFIED when every key was pinned.
+
+## 0.2.2 (renewal hardening, from the shared renewal vector)
+
+6. `renewed_at` moved inside the renewer-signed header, so a renewal's time is
+   authenticated, not malleable.
+7. **Ordering** is checked (step 8b): a renewal dated before the root it renews, or
+   out of order, is WITHHELD.
+8. **Anti-rollback** (step 8c): an optional `expected_newest` pin fails closed on a
+   truncated prefix.
+9. Deprecated (`sha1`, `md5`) and unknown hash algorithms are **refused at renewal
+   time** by the packer tools, not only flagged by horizon at verify time.
+10. The exact byte forms (content-leaf `type`, hex-text Merkle fold, anchor and stamp
+    and renewal signed messages) are written out above, so an independent reader needs
+    no source. Known honest limit, shared with RFC 4998 renewal: a hash-tree renewal
+    re-digests the leaf OBJECTS under the new hash, but the content leaf still binds
+    the external content through its `sha256` fingerprint; re-binding the content
+    itself under a new hash requires the content at renewal time and is not yet done.
