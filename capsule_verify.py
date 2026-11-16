@@ -253,21 +253,38 @@ def verify(capsule, now=None, expected_issuer=None,
             return _iso(x)
         except Exception:
             return None
-    orig_pts = [_t(s.get("stamped_at")) for s in stamps if s.get("root", root_hash) == root_hash]
-    orig_pts += [_t(a.get("observed_at")) for a in capsule["anchors"] if a.get("root") == root_hash]
-    orig_pts = [t for t in orig_pts if t is not None]
     order_ok = True
     order_detail = "renewal and stamp times are coherent"
-    prev_t = min(orig_pts) if orig_pts else None
+    prev_ren_t = None
+    established_roots = {root_hash}  # roots that already exist before a given renewal
     for i, rn in enumerate(renewals):
+        prev_root = rn.get("prev_root")
+        new_root = rn.get("root_hash")
         rt = _t(rn.get("renewed_at"))
         if rt is None:
             order_ok = False; order_detail = f"renewal {i} has no parseable renewed_at"; break
-        if prev_t is not None and rt < prev_t:
-            order_ok = False; order_detail = f"renewal {i} is dated before the root it renews"; break
-        if any(s.get("root") == rn.get("root_hash") and (_t(s.get("stamped_at")) or rt) < rt for s in stamps):
-            order_ok = False; order_detail = f"a stamp over renewal {i} predates the renewal"; break
-        prev_t = rt
+        # Floor = the LATEST signed evidence over the root being renewed, not the
+        # earliest. Using the earliest let a backdated stamp over that root lower the
+        # floor; using the latest means a renewal must follow everything already
+        # committed over the root it supersedes.
+        floor_pts = [_t(s.get("stamped_at")) for s in stamps if s.get("root") == prev_root]
+        floor_pts += [_t(a.get("observed_at")) for a in capsule["anchors"] if a.get("root") == prev_root]
+        floor_pts = [t for t in floor_pts if t is not None]
+        if prev_ren_t is not None:
+            floor_pts.append(prev_ren_t)
+        floor = max(floor_pts) if floor_pts else None
+        if floor is not None and rt < floor:
+            order_ok = False
+            order_detail = f"renewal {i} is dated before the latest signed evidence over the root it renews"
+            break
+        # A stamp over a root that THIS renewal first establishes cannot predate it.
+        # If new_root already existed (e.g. a renewal to the same hash/data), earlier
+        # stamps over it legitimately predate this renewal, so only check new roots.
+        if new_root not in established_roots:
+            if any(s.get("root") == new_root and (_t(s.get("stamped_at")) or rt) < rt for s in stamps):
+                order_ok = False; order_detail = f"a stamp over renewal {i} predates the renewal"; break
+            established_roots.add(new_root)
+        prev_ren_t = rt
     res.append(R("ordering", order_ok, order_detail))
 
     # anti-rollback: a relying party may pin the newest root it knows exists; if that

@@ -120,9 +120,10 @@ breaks the check.
    is no current pinned timestamp over the effective root (needs `restamp`).
 8b. **Ordering.** Renewal and stamp times must be coherent. Because `renewed_at`
    (renewal) and `stamped_at` (stamp) are inside signatures, they are authenticated.
-   A renewal must not be dated before the root it renews (its `renewed_at` is at or
-   after the earliest signed time over the prior root), renewals are non-decreasing in
-   time, and a stamp over a renewal root is at or after that renewal. Any violation
+   A renewal must not be dated before the root it renews: its `renewed_at` is at or
+   after the LATEST signed time over the prior root (the latest stamp or anchor on it,
+   and the previous renewal), not the earliest, so a backdated stamp cannot lower the
+   floor. A stamp over a renewal root is at or after that renewal. Any violation
    -> WITHHELD.
 8c. **Rollback (optional, fail-closed).** A relying party may pin
    `expected_newest`, the hex of the newest root it knows exists. If that root is not

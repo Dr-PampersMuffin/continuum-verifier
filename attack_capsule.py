@@ -199,6 +199,32 @@ check("K8b restamp refuses md5", "refused",
 check("K8c renew-tree refuses unknown alg", "refused",
       _raises(lambda: RS.renew_tree(copy.deepcopy(durable), P.sample_records(), content, alg="foo-256")))
 
+# K9: a backdated timestamp renewal must not lower the ordering floor (Gruszka)
+import datetime as _dt
+def _pp(s): return _dt.datetime.fromisoformat(s.replace("Z", "+00:00"))
+def _ff(d): return d.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+base9 = P.pack(P.sample_records(), content, witness="nist-beacon")
+t9 = _pp(base9["timestamps"][0]["stamped_at"])
+k9 = RS.restamp(copy.deepcopy(base9), alg="sha256+ed25519", at=_ff(t9 - _dt.timedelta(hours=2)))
+k9 = RS.renew_tree(k9, P.sample_records(), content, alg="sha3_512", at=_ff(t9 - _dt.timedelta(hours=1)))
+check("K9 backdated restamp lowers floor", "WITHHELD", verify(k9, **pins(k9))[0],
+      "floor is the latest evidence over the prior root, not the earliest")
+
+# K10/K11: the ordering floor must NOT false-reject legitimate multi-renewals
+t10 = _pp(base9["timestamps"][0]["stamped_at"])
+k10 = RS.renew_tree(copy.deepcopy(base9), P.sample_records(), content, alg="sha384",
+                    at=_ff(t10 + _dt.timedelta(hours=1)))
+k10 = RS.renew_tree(k10, P.sample_records(), content, alg="sha3_512",
+                    at=_ff(t10 + _dt.timedelta(hours=2)))
+check("K10 two renewals, distinct algs, ascending", "VERIFIED", verify(k10, **pins(k10))[0],
+      "legitimate chain must not be rejected")
+k11 = RS.renew_tree(copy.deepcopy(base9), P.sample_records(), content, alg="sha3_512",
+                    at=_ff(t10 + _dt.timedelta(hours=1)))
+k11 = RS.renew_tree(k11, P.sample_records(), content, alg="sha3_512",
+                    at=_ff(t10 + _dt.timedelta(hours=2)))
+check("K11 same-alg renewal (shared root) not false-rejected", "VERIFIED",
+      verify(k11, **pins(k11))[0], "a pre-existing root's earlier stamps may predate a later renewal")
+
 print("\n" + "="*78)
 print(f"SUMMARY: {sum(RESULTS)}/{len(RESULTS)} behaved as expected")
 sys.exit(0 if all(RESULTS) else 1)
