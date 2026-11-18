@@ -256,9 +256,18 @@ _c = _vec53()
 check("K15 first hash horizon before renewal", "WITHHELD",
       verify(_c, now=_V, horizons={"sha256": "2027-06-01T00:00:00Z", "sha3_512": "2050-01-01T00:00:00Z"},
              stamper_windows=_winall, **pins(_c))[0], "renewed too late")
-_c = _vec53(); _c["timestamps"][0]["signature"] = "00"*64
-check("K16 T1 invalid signature, later links valid", "WITHHELD",
-      verify(_c, now=_V, horizons=_GEN, stamper_windows=_winall, **pins(_c))[0], "every stamp signature checked")
+# T1 signature corrupted, with T2 and T3 rebuilt over it so links + later sigs are
+# valid: only T1's signature is bad. A chain+newest-only verifier would pass this.
+_c = _vec53(); _t1 = _c["timestamps"][0]; _t1["signature"] = "00"*64
+_k2, _k3 = Ed25519PrivateKey.generate(), Ed25519PrivateKey.generate()
+_t2, _t3 = _c["timestamps"][1], _c["timestamps"][2]
+_nt2 = P.make_stamp(_k2, _t2["root"], _t2["alg"], at=_t2["stamped_at"], prev=P.stamp_link(_t1))
+_nt3 = P.make_stamp(_k3, _t3["root"], _t3["alg"], at=_t3["stamped_at"], prev=P.stamp_link(_nt2))
+_c["timestamps"] = [_t1, _nt2, _nt3]
+_w16 = {k: {"not_after": "2029-06-01T00:00:00Z"} for k in _k(_c)}
+check("K16 only T1 signature invalid, chain + later sigs valid", "WITHHELD",
+      verify(_c, now=_V, horizons=_GEN, stamper_windows=_w16, **pins(_c))[0],
+      "every stamp signature checked, not only the newest")
 
 print("\n" + "="*78)
 print(f"SUMMARY: {sum(RESULTS)}/{len(RESULTS)} behaved as expected")
