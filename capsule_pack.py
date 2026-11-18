@@ -76,12 +76,15 @@ def leaf_objects(records, content):
     return [content_leaf] + records
 
 
-def signed_root_header(root_hash, leaf_ids, merkle_alg="sha256", version=CAPSULE_VERSION):
-    """The object the issuer signs: binds the capsule version, root_hash AND the
-    ordered leaf vector. Binding the version blocks a downgrade that would skip the
-    newer checks."""
+def signed_root_header(root_hash, leaf_ids, merkle_alg="sha256", version=CAPSULE_VERSION,
+                       issuer_id="CONTINUUM-ISSUER-01", pubkey_alg="ed25519"):
+    """The object the issuer signs: binds the capsule version, the asserted issuer
+    identity and key algorithm, root_hash AND the ordered leaf vector. Binding the
+    version blocks a downgrade; binding issuer_id/pubkey_alg stops a mutated issuer
+    label or key-algorithm from riding on a VERIFIED verdict."""
     return {"capsule_version": version, "root_hash": root_hash, "merkle_alg": merkle_alg,
-            "leaf_ids": list(leaf_ids), "leaf_count": len(leaf_ids)}
+            "leaf_ids": list(leaf_ids), "leaf_count": len(leaf_ids),
+            "issuer_id": issuer_id, "pubkey_alg": pubkey_alg}
 
 
 def stamp_link(stamp):
@@ -121,7 +124,8 @@ def pack(records, content, witness="demo-beacon", stamp_alg="sha256+ed25519", ho
     root_hash, proofs = build_merkle(leaves, "sha256")
     inclusion = {leaf_ids[i]: proofs[i] for i in range(len(objs))}
 
-    sr = signed_root_header(root_hash, leaf_ids, "sha256", CAPSULE_VERSION)
+    sr = signed_root_header(root_hash, leaf_ids, "sha256", CAPSULE_VERSION,
+                            "CONTINUUM-ISSUER-01", "ed25519")
     issuer_sig = issuer.sign(cbytes(sr)).hex()
 
     return {

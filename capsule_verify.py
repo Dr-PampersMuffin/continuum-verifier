@@ -153,7 +153,8 @@ def verify(capsule, now=None, expected_issuer=None,
     kp = capsule["key_provenance"]
     header = {"capsule_version": capsule.get("capsule_version"),
               "root_hash": root_hash, "merkle_alg": root.get("merkle_alg", "sha256"),
-              "leaf_ids": committed, "leaf_count": root.get("leaf_count")}
+              "leaf_ids": committed, "leaf_count": root.get("leaf_count"),
+              "issuer_id": kp.get("issuer_id"), "pubkey_alg": kp.get("pubkey_alg")}
     issuer_authenticated = False
     if not ed25519_verify(kp.get("issuer_pubkey", ""), cbytes(header), kp.get("issuer_signature", "")):
         res.append(R("issuer_signature", False, "issuer signature does not verify over the signed root header"))

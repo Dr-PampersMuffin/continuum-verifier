@@ -45,7 +45,8 @@ The issuer does not sign the bare `root_hash`. It signs:
 
 ```
 header = {"capsule_version":"0.3", "root_hash":<hex>, "merkle_alg":"sha256",
-          "leaf_ids":[<ordered ids, CONTENT first>], "leaf_count":<n>}
+          "leaf_ids":[<ordered ids, CONTENT first>], "leaf_count":<n>,
+          "issuer_id":<str>, "pubkey_alg":"ed25519"}
 issuer_signature = Ed25519(header canonical-bytes)
 ```
 

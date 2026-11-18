@@ -71,28 +71,28 @@
   "key_provenance": {
     "issuer_id": "CONTINUUM-ISSUER-01",
     "pubkey_alg": "ed25519",
-    "issuer_pubkey": "6d5df042619d1d3b5854fc84c9e24cd368f67227adab6c604894f66689075a58",
-    "issuer_signature": "85b55c41d204e43a0e976741f314e4ab6c9b7c9704fe8ea50ad87cd07f8b8dd2689cf4f13661f1029c2e957e97097962c7d017b8327162932f8793fd71652e05",
+    "issuer_pubkey": "228a31970918ac5e26503a94ca8d72d197a85a22ff7da567d24e3e3f14871a7d",
+    "issuer_signature": "8f0aad3828b138f7819c44e035d120be2dd4c44d5a4f84bbfd057c44ca204ef95d0ec977cb1981a1949c882e0617e031c65186403c7d31e8767de8292fc4ca02",
     "note": "sandbox key; production pins this pubkey out of band"
   },
   "anchors": [
     {
       "witness": "demo-beacon",
       "root": "6e283924b5c2da08805b1e063307beb1806ebce3141577c6889dc264994d9919",
-      "observed_at": "2026-11-18T13:26:34.147Z",
-      "anchor_pubkey": "19bc1a4199394d49fb9627c45eaa172f0d2c79f2f284c3d08963d2fe6bcf3eab",
-      "anchor_signature": "cebbf04be9490f9acebda70558f82b6642080553c77ace03e46988adcc1dd2c497a46ffb7042cfcca551623b653220b54417074b06da1956c5cbfe4418700208"
+      "observed_at": "2026-11-18T18:11:12.416Z",
+      "anchor_pubkey": "4a5c91ec2bcefc982e540bce11ff77147761462138a33908c3cc458806f1b3c6",
+      "anchor_signature": "f48bc1826ddd6e0c6907a9715ee5b873abe31495d384da82537878087cc9f2bf0c09abd359f5369e5cd3d9573c5fafc68f187bfe56fb868acc16d3af4fca9c09"
     }
   ],
   "timestamps": [
     {
       "alg": "sha256+ed25519",
-      "stamped_at": "2026-11-18T13:26:34.147Z",
+      "stamped_at": "2026-11-18T18:11:12.416Z",
       "digest": "daf19a431391f43ed01175377d7d33749221da17f5e866292d80eba5345b3618",
       "root": "6e283924b5c2da08805b1e063307beb1806ebce3141577c6889dc264994d9919",
       "prev": "",
-      "pubkey": "6d4f140fa82d90e1ead01964a7bf2ed63f35140f04090a2c399822c181d1cda3",
-      "signature": "2b206a0acf6f4fe30a8c89fa17f1e98aa15d17a342e90fe27e99a83d3c5b7cf105c0966da50699b8072ee20dc6898c9bbc0273f12734930065ab073537aab102"
+      "pubkey": "896dc16d7be83a2087f2bdfa99a287ae1858992a4c04b45686d66421e78d06bd",
+      "signature": "b481af9cc4c463ebde1dd8a273d06d3c0a3713b0c21f56b8249a5f952b988544b64205bdf7e1fceeb46243f59af43ee75a76e9bee3863eea39fd7384b8d36106"
     }
   ],
   "tree_renewals": [],

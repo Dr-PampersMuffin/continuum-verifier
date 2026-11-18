@@ -108,7 +108,9 @@ swap["key_provenance"]["issuer_pubkey"] = pk(atk)
 # re-sign the SAME signed-root header with the attacker key (header binds the version)
 hdr = {"capsule_version": genuine["capsule_version"], "root_hash": genuine["root"]["root_hash"],
        "merkle_alg": "sha256", "leaf_ids": genuine["root"]["leaf_ids"],
-       "leaf_count": genuine["root"]["leaf_count"]}
+       "leaf_count": genuine["root"]["leaf_count"],
+       "issuer_id": genuine["key_provenance"]["issuer_id"],
+       "pubkey_alg": genuine["key_provenance"]["pubkey_alg"]}
 swap["key_provenance"]["issuer_signature"] = atk.sign(P.cbytes(hdr)).hex()
 check("issuer-key swap vs pin", "WITHHELD", verify(swap, **pins(genuine))[0])
 check("issuer-key swap, no pin", "SELF_CONSISTENT", verify(swap)[0])
