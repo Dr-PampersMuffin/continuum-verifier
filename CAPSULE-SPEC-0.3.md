@@ -1,4 +1,4 @@
-# Continuum Evidence Capsule — Spec 0.2
+# Continuum Evidence Capsule — Spec 0.3
 
 A capsule is one portable, self-verifying object. A stranger with no internet, no
 access to the issuer, and only this spec can hand the capsule to a fresh
@@ -44,14 +44,15 @@ most stdlibs) and an Ed25519 verify.
 The issuer does not sign the bare `root_hash`. It signs:
 
 ```
-header = {"root_hash":<hex>, "merkle_alg":"sha256",
+header = {"capsule_version":"0.3", "root_hash":<hex>, "merkle_alg":"sha256",
           "leaf_ids":[<ordered ids, CONTENT first>], "leaf_count":<n>}
 issuer_signature = Ed25519(header canonical-bytes)
 ```
 
 Because the ordered leaf vector is signed, the presented records must reproduce it
 exactly. Omitting or duplicating a record changes `leaf_ids` or its length and
-breaks the check.
+breaks the check. Binding `capsule_version` blocks a downgrade that would skip the
+newer checks.
 
 ## Exact byte forms (so an independent reader needs no source)
 
@@ -67,8 +68,13 @@ breaks the check.
 - **Anchor signature.** An anchor signs canonical `{root, witness, observed_at}`.
 - **Timestamp.** `digest = H_hashpart(root.encode())` where `root` is the hex string
   of the covered root and `hashpart` is the part of `alg` before `+`. The stamp signs
-  canonical `{alg, stamped_at, digest, root}`, so the stamp time and covered root are
-  inside the signature.
+  canonical `{alg, stamped_at, digest, root, prev}`, so the stamp time, covered root
+  and chain link are inside the signature.
+- **Timestamp chain.** `prev` is `""` for the first timestamp, and otherwise the
+  SHA-256 hex of the canonical bytes of the whole previous timestamp object (all its
+  fields including its signature). This links the timestamps into a hash chain, so
+  "the next timestamp" is cryptographic, not merely array order, which the RFC 4998
+  5.3 check below relies on.
 - **Hash-tree renewal.** The renewer signs canonical `{root_hash, merkle_alg,
   leaf_ids, leaf_count, prev_root, renewed_at}`. `renewed_at` is inside the signature,
   so the renewal time is not malleable.
@@ -106,12 +112,13 @@ breaks the check.
    renewal (or the original tree if none); its hash is the **effective tree hash**.
    For VERIFIED, the newest renewer key must be the issuer key or match
    `--expected-renewer`.
-7. **Timestamps.** For each entry, recompute `digest = H_alg(entry.root)` and
-   Ed25519-verify the signature over the canonical envelope
-   `{alg, stamped_at, digest, root}`. Any failure -> WITHHELD. A stamp counts
-   toward currency only if its key matches `--expected-stamper` (when pins are
-   supplied). A stamp is **current** if it covers the effective tree root and its
-   algorithm's horizon is in the future.
+7. **Timestamps.** For each entry in order, check the chain link `prev` (`""` for the
+   first, else SHA-256 of the canonical previous entry), recompute
+   `digest = H_alg(entry.root)`, and Ed25519-verify the signature over the canonical
+   envelope `{alg, stamped_at, digest, root, prev}`. Any failure, including a broken
+   chain link, -> WITHHELD. A stamp counts toward currency only if its key matches
+   `--expected-stamper` (when pins are supplied). A stamp is **current** if it covers
+   the effective tree root and its algorithm's horizon is in the future.
 8. **Horizons.** Trust horizons come from the **verifier's policy**, held out of
    band (built-in defaults, overridable per relying party). The `trust_horizons`
    field inside the capsule is advisory and is NOT read for the verdict, so a
@@ -129,6 +136,17 @@ breaks the check.
    `expected_newest`, the hex of the newest root it knows exists. If that root is not
    present among the capsule's roots (original plus every renewal), the capsule may be
    a truncated or rolled-back prefix -> WITHHELD. Absent the pin, this check is skipped.
+8d. **RFC 4998 5.3 timestamp validity.** Every timestamp that has a NEXT one in the
+   chain must have been valid at the moment the next was applied, the reference time
+   being the next timestamp's signed `stamped_at`. "Valid" means: the stamp's hash was
+   within horizon at the reference time, AND, when a key validity window is supplied as
+   policy (`stamper_windows`, keyed by pubkey), the reference time falls within it. A
+   key pinned with no window is trusted at all reference times for the key check; the
+   hash-horizon check still applies. Each hash-tree renewal must likewise have been
+   made while the PRIOR tree hash was still within horizon. Any violation -> WITHHELD.
+   The newest timestamp has no next; its freshness at V is the horizon check of step 8
+   (RESTAMP_NEEDED), not a 5.3 failure. Because every timestamp signature is checked,
+   an invalid earlier signature fails even when later links are valid.
 9. **Verdict precedence.** WITHHELD (any check failed) > RESTAMP_NEEDED (past a
    horizon) > VERIFIED (all checks pass AND a pinned durable witness verified AND
    the issuer is authenticated AND a pinned current timestamp exists AND, if there
@@ -192,3 +210,19 @@ Exit codes: 0 VERIFIED, 1 WITHHELD, 2 FAILED, 3 SELF_CONSISTENT, 4 RESTAMP_NEEDE
     re-digests the leaf OBJECTS under the new hash, but the content leaf still binds
     the external content through its `sha256` fingerprint; re-binding the content
     itself under a new hash requires the content at renewal time and is not yet done.
+
+## 0.3 (timestamp chain and RFC 4998 5.3; capsule-format change)
+
+A 0.2 capsule does not verify under 0.3; re-issue. The changes:
+
+11. `capsule_version` is inside the issuer-signed root header, blocking a version
+    downgrade that would skip the newer checks.
+12. Timestamps form a hash chain: each carries a `prev` link (SHA-256 of the previous
+    timestamp), inside its signature. "The next timestamp" is now cryptographic.
+13. **RFC 4998 5.3** is enforced (step 8d): each covered timestamp must have been valid
+    (hash within horizon, and within its key window when windows are given as policy)
+    at the time the next timestamp was applied, and each renewal made while the prior
+    tree hash was in horizon. Reference time is the next timestamp's signed time.
+14. Stamper key validity windows may be supplied as verifier policy
+    (`stamper_windows` / `--stamper-window`). A pinned key with no window is trusted at
+    all times for the key check; the hash-horizon check always applies.

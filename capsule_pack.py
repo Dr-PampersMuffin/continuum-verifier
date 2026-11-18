@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives import serialization
 
-CAPSULE_VERSION = "0.2"
+CAPSULE_VERSION = "0.3"
 
 
 def cbytes(obj) -> bytes:
@@ -76,18 +76,27 @@ def leaf_objects(records, content):
     return [content_leaf] + records
 
 
-def signed_root_header(root_hash, leaf_ids, merkle_alg="sha256"):
-    """The object the issuer signs: binds root_hash AND the ordered leaf vector."""
-    return {"root_hash": root_hash, "merkle_alg": merkle_alg,
+def signed_root_header(root_hash, leaf_ids, merkle_alg="sha256", version=CAPSULE_VERSION):
+    """The object the issuer signs: binds the capsule version, root_hash AND the
+    ordered leaf vector. Binding the version blocks a downgrade that would skip the
+    newer checks."""
+    return {"capsule_version": version, "root_hash": root_hash, "merkle_alg": merkle_alg,
             "leaf_ids": list(leaf_ids), "leaf_count": len(leaf_ids)}
 
 
-def make_stamp(sk, covered_root, alg, at=None):
+def stamp_link(stamp):
+    """Chain digest of a full stamp token, used as the next stamp's `prev`. Links the
+    timestamps into a hash chain so 'the next timestamp' is cryptographically defined
+    (needed for the RFC 4998 5.3 validity-at-the-next check)."""
+    return sha256(cbytes(stamp))
+
+
+def make_stamp(sk, covered_root, alg, at=None, prev=""):
     hp = alg.split("+")[0]
     digest = H(hp, covered_root.encode())
     at = at or now_iso()
-    env = {"alg": alg, "stamped_at": at, "digest": digest, "root": covered_root}
-    return {"alg": alg, "stamped_at": at, "digest": digest, "root": covered_root,
+    env = {"alg": alg, "stamped_at": at, "digest": digest, "root": covered_root, "prev": prev}
+    return {"alg": alg, "stamped_at": at, "digest": digest, "root": covered_root, "prev": prev,
             "pubkey": pk_hex(sk), "signature": sk.sign(cbytes(env)).hex()}
 
 
@@ -98,7 +107,8 @@ def make_anchor(sk, root_hash, witness, observed=None):
             "anchor_pubkey": pk_hex(sk), "anchor_signature": sk.sign(cbytes(env)).hex()}
 
 
-def pack(records, content, witness="demo-beacon", stamp_alg="sha256+ed25519", horizons=None):
+def pack(records, content, witness="demo-beacon", stamp_alg="sha256+ed25519", horizons=None,
+         sealed_at=None):
     issuer = Ed25519PrivateKey.generate()
     anchor = Ed25519PrivateKey.generate()
     stamper = Ed25519PrivateKey.generate()
@@ -111,12 +121,12 @@ def pack(records, content, witness="demo-beacon", stamp_alg="sha256+ed25519", ho
     root_hash, proofs = build_merkle(leaves, "sha256")
     inclusion = {leaf_ids[i]: proofs[i] for i in range(len(objs))}
 
-    sr = signed_root_header(root_hash, leaf_ids, "sha256")
+    sr = signed_root_header(root_hash, leaf_ids, "sha256", CAPSULE_VERSION)
     issuer_sig = issuer.sign(cbytes(sr)).hex()
 
     return {
         "capsule_version": CAPSULE_VERSION,
-        "spec_ref": "CONTINUUM-CAPSULE-SPEC-0.2",
+        "spec_ref": "CONTINUUM-CAPSULE-SPEC-0.3",
         "content": content,
         "consent_chain": {"records": records},
         "root": {"root_hash": root_hash, "merkle_alg": "sha256",
@@ -125,8 +135,8 @@ def pack(records, content, witness="demo-beacon", stamp_alg="sha256+ed25519", ho
         "key_provenance": {"issuer_id": "CONTINUUM-ISSUER-01", "pubkey_alg": "ed25519",
                            "issuer_pubkey": pk_hex(issuer), "issuer_signature": issuer_sig,
                            "note": "sandbox key; production pins this pubkey out of band"},
-        "anchors": [make_anchor(anchor, root_hash, witness)],
-        "timestamps": [make_stamp(stamper, root_hash, stamp_alg)],
+        "anchors": [make_anchor(anchor, root_hash, witness, observed=sealed_at)],
+        "timestamps": [make_stamp(stamper, root_hash, stamp_alg, at=sealed_at, prev="")],
         "tree_renewals": [],
         "trust_horizons": horizons or {"sha256": "2035-01-01T00:00:00Z",
                                        "sha3_512": "2050-01-01T00:00:00Z",

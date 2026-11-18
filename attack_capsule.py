@@ -64,9 +64,14 @@ check("re-stamp digest tamper", "WITHHELD", verify(t, **pins(durable))[0])
 t = copy.deepcopy(durable); t["content"]["fingerprint"] = "ff"*32
 check("content fingerprint swap", "WITHHELD", verify(t, **pins(durable))[0])
 
-print("\nBATTERY SWAP (timestamp renewal revives an expired capsule)")
-revived = RS.restamp(copy.deepcopy(expired), alg="sha3_512+ed25519")
-check("expired -> re-stamped", "VERIFIED", verify(revived, **pins(revived))[0])
+print("\nBATTERY SWAP (timestamp renewal extends a capsule BEFORE its hash expires)")
+fresh = P.pack(P.sample_records(), content, witness="nist-beacon", stamp_alg="sha256+ed25519")
+revived = RS.restamp(copy.deepcopy(fresh), alg="sha3_512+ed25519")
+check("sha256 re-stamped to sha3_512 in time", "VERIFIED", verify(revived, **pins(revived))[0])
+# RFC 4998 5.3: re-stamping a hash that is ALREADY past horizon is too late
+too_late = RS.restamp(copy.deepcopy(expired), alg="sha3_512+ed25519")
+check("re-stamp of an already-expired sha1 stamp", "WITHHELD",
+      verify(too_late, **pins(too_late))[0], "sha1 was past horizon when covered (5.3)")
 
 print("\nFORWARD DURABILITY over simulated time (tree hash ages too)")
 future = datetime(2040, 1, 1, tzinfo=timezone.utc)
@@ -100,9 +105,10 @@ check("key matches pin", "VERIFIED", verify(genuine, **pins(genuine))[0])
 swap = copy.deepcopy(genuine)
 atk = Ed25519PrivateKey.generate()
 swap["key_provenance"]["issuer_pubkey"] = pk(atk)
-# re-sign the SAME signed-root header with the attacker key
-hdr = {"root_hash": genuine["root"]["root_hash"], "merkle_alg": "sha256",
-       "leaf_ids": genuine["root"]["leaf_ids"], "leaf_count": genuine["root"]["leaf_count"]}
+# re-sign the SAME signed-root header with the attacker key (header binds the version)
+hdr = {"capsule_version": genuine["capsule_version"], "root_hash": genuine["root"]["root_hash"],
+       "merkle_alg": "sha256", "leaf_ids": genuine["root"]["leaf_ids"],
+       "leaf_count": genuine["root"]["leaf_count"]}
 swap["key_provenance"]["issuer_signature"] = atk.sign(P.cbytes(hdr)).hex()
 check("issuer-key swap vs pin", "WITHHELD", verify(swap, **pins(genuine))[0])
 check("issuer-key swap, no pin", "SELF_CONSISTENT", verify(swap)[0])
@@ -120,13 +126,14 @@ a["anchor_signature"] = atk.sign(P.cbytes({"root": a["root"], "witness": "nist-b
 check("K1 forged durable anchor key", "SELF_CONSISTENT", verify(k1, **P1)[0],
       "was VERIFIED in 0.1")
 
-# K2a: append a fresh-key current stamp to lift a stale capsule
+# K2a: append a properly chained fresh-key stamp to lift a stale capsule
 k2 = copy.deepcopy(expired)
 s = Ed25519PrivateKey.generate()
 k2["timestamps"].append(P.make_stamp(s, k2["root"]["root_hash"], "sha256+ed25519",
-                                     at="2030-01-01T00:00:00Z"))
-check("K2a fresh unpinned stamp key", "RESTAMP_NEEDED",
-      verify(k2, **pins(expired))[0], "unpinned stamp cannot lift it")
+                                     at="2030-01-01T00:00:00Z",
+                                     prev=P.stamp_link(k2["timestamps"][-1])))
+check("K2a fresh unpinned stamp key", "WITHHELD",
+      verify(k2, **pins(expired))[0], "sha1 was past horizon when covered; 5.3 rejects it")
 
 # K2b: edit stamped_at on a stamp without re-signing (now inside the signed envelope)
 k2b = copy.deepcopy(durable)
@@ -224,6 +231,34 @@ k11 = RS.renew_tree(k11, P.sample_records(), content, alg="sha3_512",
                     at=_ff(t10 + _dt.timedelta(hours=2)))
 check("K11 same-alg renewal (shared root) not false-rejected", "VERIFIED",
       verify(k11, **pins(k11))[0], "a pre-existing root's earlier stamps may predate a later renewal")
+
+print("\nRFC 4998 5.3: each timestamp valid when the next one covered it")
+_T1, _T2, _T3, _V = ("2026-01-01T00:00:00.000Z", "2027-01-01T00:00:00.000Z",
+                     "2028-01-01T00:00:00.000Z", _dt.datetime(2029, 1, 1, tzinfo=_dt.timezone.utc))
+_GEN = {"sha256": "2035-01-01T00:00:00Z", "sha3_512": "2050-01-01T00:00:00Z"}
+def _vec53():
+    c = P.pack(P.sample_records(), content, witness="nist-beacon", stamp_alg="sha256+ed25519", sealed_at=_T1)
+    c = RS.restamp(c, alg="sha256+ed25519", at=_T2)
+    c = RS.renew_tree(c, P.sample_records(), content, alg="sha3_512", at=_T3)
+    return c
+def _k(c): return [s["pubkey"] for s in c["timestamps"]]       # [T1, T2, T3]
+_c = _vec53(); _kT1, _kT2, _kT3 = _k(_c)
+_winall = {k: {"not_after": "2029-06-01T00:00:00Z"} for k in (_kT1, _kT2, _kT3)}
+check("K12 all valid at refs and T3 at V", "VERIFIED",
+      verify(_c, now=_V, horizons=_GEN, stamper_windows=_winall, **pins(_c))[0])
+_c = _vec53(); _kT1 = _k(_c)[0]; _w = dict(_winall); _w[_kT1] = {"not_after": "2026-06-01T00:00:00Z"}
+check("K13 T1 key ends before T2", "WITHHELD",
+      verify(_c, now=_V, horizons=_GEN, stamper_windows=_w, **pins(_c))[0], "fails at T1 (5.3)")
+_c = _vec53(); _kT1 = _k(_c)[0]; _w = dict(_winall); _w[_kT1] = {"not_after": "2027-06-01T00:00:00Z"}
+check("K14 T1 key ends after T2 before V", "VERIFIED",
+      verify(_c, now=_V, horizons=_GEN, stamper_windows=_w, **pins(_c))[0], "valid when T2 covered it")
+_c = _vec53()
+check("K15 first hash horizon before renewal", "WITHHELD",
+      verify(_c, now=_V, horizons={"sha256": "2027-06-01T00:00:00Z", "sha3_512": "2050-01-01T00:00:00Z"},
+             stamper_windows=_winall, **pins(_c))[0], "renewed too late")
+_c = _vec53(); _c["timestamps"][0]["signature"] = "00"*64
+check("K16 T1 invalid signature, later links valid", "WITHHELD",
+      verify(_c, now=_V, horizons=_GEN, stamper_windows=_winall, **pins(_c))[0], "every stamp signature checked")
 
 print("\n" + "="*78)
 print(f"SUMMARY: {sum(RESULTS)}/{len(RESULTS)} behaved as expected")

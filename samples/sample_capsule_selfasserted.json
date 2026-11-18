@@ -1,6 +1,6 @@
 {
-  "capsule_version": "0.2",
-  "spec_ref": "CONTINUUM-CAPSULE-SPEC-0.2",
+  "capsule_version": "0.3",
+  "spec_ref": "CONTINUUM-CAPSULE-SPEC-0.3",
   "content": {
     "fingerprint": "9bb481b32841ca696f20ce6193cc84b2e23c46887b968ed037e6e262eddf83bb",
     "fingerprint_alg": "sha256",
@@ -71,27 +71,28 @@
   "key_provenance": {
     "issuer_id": "CONTINUUM-ISSUER-01",
     "pubkey_alg": "ed25519",
-    "issuer_pubkey": "e1228fd9f7a4b4a01a2a464544f36a6b8a0c6154757b68d74ab0b13b148a9364",
-    "issuer_signature": "28cecd4efd7bf90e52497f2b207703a4105f8dd7e972d23912f4e77fc3fc48517a152b7ed7a602e9d7a652a4c0d46f73ab6e998b57103926e961d2198a85e50e",
+    "issuer_pubkey": "6d5df042619d1d3b5854fc84c9e24cd368f67227adab6c604894f66689075a58",
+    "issuer_signature": "85b55c41d204e43a0e976741f314e4ab6c9b7c9704fe8ea50ad87cd07f8b8dd2689cf4f13661f1029c2e957e97097962c7d017b8327162932f8793fd71652e05",
     "note": "sandbox key; production pins this pubkey out of band"
   },
   "anchors": [
     {
       "witness": "demo-beacon",
       "root": "6e283924b5c2da08805b1e063307beb1806ebce3141577c6889dc264994d9919",
-      "observed_at": "2026-11-13T20:20:20.919Z",
-      "anchor_pubkey": "fcd0a6f6d154cd45b5d1dbb80692cb3316571fd95853c29f20345841cc47f752",
-      "anchor_signature": "d416b7dfc1abf80016df3809fb3c7ec4f2d9ec115070cf2942644256abc08b5092456812961c4870d297ee749b96fbde89f4c309df4b46c128415b0d6747b908"
+      "observed_at": "2026-11-18T13:26:34.147Z",
+      "anchor_pubkey": "19bc1a4199394d49fb9627c45eaa172f0d2c79f2f284c3d08963d2fe6bcf3eab",
+      "anchor_signature": "cebbf04be9490f9acebda70558f82b6642080553c77ace03e46988adcc1dd2c497a46ffb7042cfcca551623b653220b54417074b06da1956c5cbfe4418700208"
     }
   ],
   "timestamps": [
     {
       "alg": "sha256+ed25519",
-      "stamped_at": "2026-11-13T20:20:20.919Z",
+      "stamped_at": "2026-11-18T13:26:34.147Z",
       "digest": "daf19a431391f43ed01175377d7d33749221da17f5e866292d80eba5345b3618",
       "root": "6e283924b5c2da08805b1e063307beb1806ebce3141577c6889dc264994d9919",
-      "pubkey": "8b374fe34d1b389396fa01dc847d2123065843e5af554b7eb046a507c8095087",
-      "signature": "865b4a955e177e64739024eadff6b22e9c02c7c90e57f68c7f282e9f2a688485d441c6d9398c712960f3b201b7b191b4912fd8252408535cd6641106b44f0c03"
+      "prev": "",
+      "pubkey": "6d4f140fa82d90e1ead01964a7bf2ed63f35140f04090a2c399822c181d1cda3",
+      "signature": "2b206a0acf6f4fe30a8c89fa17f1e98aa15d17a342e90fe27e99a83d3c5b7cf105c0966da50699b8072ee20dc6898c9bbc0273f12734930065ab073537aab102"
     }
   ],
   "tree_renewals": [],

@@ -22,7 +22,7 @@ python3 capsule_verify.py samples/sample_capsule_durable.json
 
 # run the adversarial suite: clean capsules + every tamper + the renewal paths
 # + the external-review boundary regressions
-python3 attack_capsule.py        # 36/36 expected
+python3 attack_capsule.py        # 45/45 expected
 
 # make your own capsule
 python3 capsule_pack.py mycap.json --witness nist-beacon
@@ -85,7 +85,7 @@ and integrity. Whether a claim inside it is true is a separate question.
 
 ## Honest status (read before relying on it)
 
-This is a reference implementation at **v0.2**, published to be read and broken.
+This is a reference implementation at **v0.3**, published to be read and broken.
 
 - The public witnesses and renewal signatures in the samples are **simulated with
   local keys**. A sample witness named `nist-beacon` is a stand-in; VERIFIED here
@@ -97,7 +97,7 @@ This is a reference implementation at **v0.2**, published to be read and broken.
 - Forward only: a capsule attests what was true when it was sealed, carried
   forward. It cannot certify history that was never witnessed.
 
-## 0.2: what changed, and why
+## 0.2 and 0.3: what changed, and why
 
 0.2 closes four boundary gaps raised in external review (K. Gruszka, Nov 2026),
 each now a named regression in `attack_capsule.py`:
@@ -130,7 +130,9 @@ each now a named regression in `attack_capsule.py`:
    limit remains: a hash-tree renewal re-digests the leaf objects, but the content leaf
    still binds the external content through its `sha256` fingerprint.
 
-See `CAPSULE-SPEC-0.2.md` for the full, language-agnostic verification algorithm.
+7. **Timestamp chain and RFC 4998 5.3 (0.3, from the shared renewal vector).** Timestamps now form a hash chain (each signs a `prev` link), the capsule version is bound into the issuer signature, and the verifier enforces 5.3: each covered timestamp must have been valid (hash in horizon, key within its window when windows are given as policy) when the next timestamp covered it, and each renewal made while the prior tree hash was in horizon. Because every timestamp signature is checked, an invalid earlier signature fails even when later links are valid.
+
+See `CAPSULE-SPEC-0.3.md` for the full, language-agnostic verification algorithm.
 
 ## Break it
 

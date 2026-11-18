@@ -58,7 +58,8 @@ def restamp(capsule, alg="sha3_512+ed25519", at=None, stamper=None):
     _reject_weak(alg)
     sk = stamper or Ed25519PrivateKey.generate()
     root = effective_root(capsule)
-    capsule["timestamps"].append(P.make_stamp(sk, root, alg, at=at))
+    prev = P.stamp_link(capsule["timestamps"][-1]) if capsule.get("timestamps") else ""
+    capsule["timestamps"].append(P.make_stamp(sk, root, alg, at=at, prev=prev))
     hp = alg.split("+")[0]
     capsule.setdefault("trust_horizons", {}).setdefault(
         hp, {"sha3_512": "2050-01-01T00:00:00Z"}.get(hp, "2050-01-01T00:00:00Z"))

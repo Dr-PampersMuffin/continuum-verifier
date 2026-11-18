@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from cryptography.exceptions import InvalidSignature
 
-SPEC_VERSION = "0.2"
+SPEC_VERSION = "0.3"
 DURABLE_WITNESSES = {"bitcoin-ots", "ct-log", "nist-beacon"}
 # Trust horizons are the VERIFIER's policy, held out of band, NOT read from the
 # capsule. A capsule may carry an advisory `trust_horizons` hint, but it is ignored
@@ -95,11 +95,12 @@ def _pin_map(pairs):
 
 def verify(capsule, now=None, expected_issuer=None,
            expected_witnesses=None, expected_stampers=None, expected_renewer=None,
-           horizons=None, expected_newest=None):
+           horizons=None, expected_newest=None, stamper_windows=None):
     now = now or datetime.now(timezone.utc)
     policy = {**DEFAULT_HORIZONS, **(horizons or {})}
     expected_witnesses = {k: v.lower() for k, v in (expected_witnesses or {}).items()}
     expected_stampers = set(s.lower() for s in expected_stampers) if expected_stampers else None
+    stamper_windows = {k.lower(): v for k, v in (stamper_windows or {}).items()}
     res = []
 
     if capsule.get("capsule_version") != SPEC_VERSION:
@@ -150,7 +151,8 @@ def verify(capsule, now=None, expected_issuer=None,
 
     # (3) ISSUER SIGNATURE over the signed root header (binds root AND leaf vector)
     kp = capsule["key_provenance"]
-    header = {"root_hash": root_hash, "merkle_alg": root.get("merkle_alg", "sha256"),
+    header = {"capsule_version": capsule.get("capsule_version"),
+              "root_hash": root_hash, "merkle_alg": root.get("merkle_alg", "sha256"),
               "leaf_ids": committed, "leaf_count": root.get("leaf_count")}
     issuer_authenticated = False
     if not ed25519_verify(kp.get("issuer_pubkey", ""), cbytes(header), kp.get("issuer_signature", "")):
@@ -209,15 +211,21 @@ def verify(capsule, now=None, expected_issuer=None,
     counting = []
     if not stamps:
         stamp_broken = True; res.append(R("restamp_trail", False, "no timestamps present"))
-    for s in stamps:
+    for idx, s in enumerate(stamps):
         hp = s.get("alg", "").split("+")[0]
         covered = s.get("root", root_hash)
         try:
             digest = h_alg(hp, covered.encode())
         except ValueError as e:
             stamp_broken = True; res.append(R("restamp_trail", False, str(e))); break
+        # the stamp chain: each stamp commits to the one before it, so the order of
+        # timestamps is cryptographic, not just array order
+        expected_prev = "" if idx == 0 else h_alg("sha256", cbytes(stamps[idx - 1]))
+        if s.get("prev", "") != expected_prev:
+            stamp_broken = True
+            res.append(R("restamp_trail", False, f"stamp {idx} breaks the timestamp chain (prev mismatch)")); break
         env = {"alg": s.get("alg"), "stamped_at": s.get("stamped_at"),
-               "digest": s.get("digest"), "root": covered}
+               "digest": s.get("digest"), "root": covered, "prev": s.get("prev", "")}
         if digest != s.get("digest") or not ed25519_verify(s.get("pubkey", ""), cbytes(env), s.get("signature", "")):
             stamp_broken = True
             res.append(R("restamp_trail", False, f"stamp alg={s.get('alg')} fails (digest or envelope signature)")); break
@@ -295,6 +303,54 @@ def verify(capsule, now=None, expected_issuer=None,
         res.append(R("no_rollback", rb_ok,
                      "pinned newest root present" if rb_ok else
                      "pinned newest root absent: possible truncation to an older prefix (fail-closed)"))
+
+    # RFC 4998 5.3: each timestamp must have been valid AT THE TIME of the one that
+    # covers it next (the next in the chain), and the newest at the verification time V.
+    # "Valid" = key within its validity window (when a window is given as policy) AND
+    # the stamp's hash within horizon at that reference time. A key pinned with no
+    # window is trusted at all times for the key check; the hash-horizon check still
+    # applies. Earlier timestamps are all signature-checked above, so a broken older
+    # signature already failed; here we add the time-validity that 5.3 requires.
+    if not stamp_broken and len(stamps) > 1:
+        s53_ok = True
+        s53_detail = "each covered timestamp was valid when the next one was applied"
+        stimes = [_t(s.get("stamped_at")) for s in stamps]
+        # Only stamps that HAVE a next one are subject to 5.3. The newest stamp's own
+        # freshness at V is the restamp-needed question, handled separately above, and
+        # a stale newest stamp is RESTAMP_NEEDED, not a 5.3 failure.
+        for i in range(len(stamps) - 1):
+            s = stamps[i]
+            ref = stimes[i + 1]
+            if ref is None:
+                continue
+            win = stamper_windows.get(s.get("pubkey", "").lower())
+            if win:
+                nb = _t(win.get("not_before")) if win.get("not_before") else None
+                na = _t(win.get("not_after")) if win.get("not_after") else None
+                if (nb and ref < nb) or (na and ref > na):
+                    s53_ok = False
+                    s53_detail = f"stamp {i} key is outside its validity window at the reference time"
+                    break
+            hz = policy.get(s.get("alg", "").split("+")[0])
+            if hz is None or _iso(hz) <= ref:
+                s53_ok = False
+                s53_detail = f"stamp {i} hash is past its horizon by the reference time"
+                break
+        res.append(R("ts_validity_5_3", s53_ok, s53_detail))
+
+        # and each hash-tree renewal must have been made while the PRIOR tree hash was
+        # still within horizon (you renew before the old hash weakens, not after).
+        tr_ok = True
+        tr_detail = "each renewal made while the prior tree hash was in horizon"
+        for i, rn in enumerate(renewals):
+            prior_alg = root.get("merkle_alg", "sha256") if i == 0 else renewals[i - 1].get("merkle_alg")
+            rt = _t(rn.get("renewed_at"))
+            hz = policy.get((prior_alg or "").split("+")[0])
+            if rt is not None and (hz is None or _iso(hz) <= rt):
+                tr_ok = False
+                tr_detail = f"renewal {i} was made after the prior tree hash {prior_alg} passed its horizon"
+                break
+        res.append(R("tree_renewal_in_horizon", tr_ok, tr_detail))
 
     # precedence
     all_pass = all(r.ok for r in res)
@@ -376,10 +432,17 @@ def main():
     ap.add_argument("--expect-newest-root",
                     help="hex of the newest root the relying party knows exists; if absent from the "
                          "capsule, verification fails closed on a possible rollback")
+    ap.add_argument("--stamper-window", action="append", default=[],
+                    help="HEX=NOT_BEFORE..NOT_AFTER key validity window as policy (ISO, either side may be "
+                         "empty), repeatable; used for the RFC 4998 5.3 valid-at-the-next check")
     args = ap.parse_args()
     horizons = {}
     for p in args.horizon:
         k, _, v = p.partition("="); horizons[k.strip()] = v.strip()
+    windows = {}
+    for p in args.stamper_window:
+        k, _, v = p.partition("="); nb, _, na = v.partition("..")
+        windows[k.strip()] = {"not_before": nb.strip() or None, "not_after": na.strip() or None}
     try:
         with open(args.capsule) as f:
             cap = json.load(f)
@@ -393,7 +456,8 @@ def main():
                           expected_stampers=args.expected_stamper or None,
                           expected_renewer=args.expected_renewer,
                           horizons=horizons or None,
-                          expected_newest=args.expect_newest_root)
+                          expected_newest=args.expect_newest_root,
+                          stamper_windows=windows or None)
     if not args.quiet:
         render(verdict, res, args.capsule)
     sys.exit(EXIT[verdict])

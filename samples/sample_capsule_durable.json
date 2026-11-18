@@ -1,6 +1,6 @@
 {
-  "capsule_version": "0.2",
-  "spec_ref": "CONTINUUM-CAPSULE-SPEC-0.2",
+  "capsule_version": "0.3",
+  "spec_ref": "CONTINUUM-CAPSULE-SPEC-0.3",
   "content": {
     "fingerprint": "9bb481b32841ca696f20ce6193cc84b2e23c46887b968ed037e6e262eddf83bb",
     "fingerprint_alg": "sha256",
@@ -71,27 +71,28 @@
   "key_provenance": {
     "issuer_id": "CONTINUUM-ISSUER-01",
     "pubkey_alg": "ed25519",
-    "issuer_pubkey": "406ab8742960f747fa243c881563fba0389299f862b6eb56ae07afcfdf06330e",
-    "issuer_signature": "9596b92dff08ec611f0e8440a612668e5e92374378e1bd5d3cacb3c6baa4c21bd90d75b0aa7a793f7f7506b897bdf92282da65abce2e06b02e2f5ca77e79d907",
+    "issuer_pubkey": "39e411c18bdcb538247a68144b138a0fe60df2c77aaa225d8931da748d7a4053",
+    "issuer_signature": "68e81bd4d4c081fde03e5a9fe26f4aba6e7ae07d1909b0cd5cabd709b8096c80d1fd57e9431034a0b3a7ee8d985149b1eab6406d722e781b40821ad1c6426508",
     "note": "sandbox key; production pins this pubkey out of band"
   },
   "anchors": [
     {
       "witness": "nist-beacon",
       "root": "6e283924b5c2da08805b1e063307beb1806ebce3141577c6889dc264994d9919",
-      "observed_at": "2026-11-13T20:20:20.858Z",
-      "anchor_pubkey": "26e86922be2a82f50104f89cccaeb978365e367e182c2a5e2b896e79f1a005c3",
-      "anchor_signature": "6751563a06a6e48ed83f015822134ee08a7b034b06b90ca8122cfaf582ed91d2473a26b8b0f3bb5c43f274fbfbedf4876870c844fe0eb1609c788b6c23ffc202"
+      "observed_at": "2026-11-18T13:26:34.085Z",
+      "anchor_pubkey": "e3ed5096d1ed5eb64d54505a09befbf86701d695a36557b94ac636164342f3a5",
+      "anchor_signature": "6502fdb3cfb3bf8ef75a6e21123186a2db802b63bbce9d3a98028053f150c1f72f8b4aa142f146f70d929b3fcf19286fb2ffe2537eba8a1230dde7d1138b4a0d"
     }
   ],
   "timestamps": [
     {
       "alg": "sha256+ed25519",
-      "stamped_at": "2026-11-13T20:20:20.858Z",
+      "stamped_at": "2026-11-18T13:26:34.085Z",
       "digest": "daf19a431391f43ed01175377d7d33749221da17f5e866292d80eba5345b3618",
       "root": "6e283924b5c2da08805b1e063307beb1806ebce3141577c6889dc264994d9919",
-      "pubkey": "963fc46c132d2872f95bbd60768c8edbb76e1a84a3c9d0ec7c3b972a93d718dd",
-      "signature": "ea23b3b7966427d09c651b77a695a5563838f75b813a659cda06c1d0ebf55b51d743c3df7f494944300bf5b1d36cd714c06c349e938b8d587b9174e893f94609"
+      "prev": "",
+      "pubkey": "018f7378fd7ee3798c7880c41042022a3db1021572dd43640e3d025965595210",
+      "signature": "4bcdf5061b1047d34edb4a255b0a89d20f2dc9d81de1f63de9b79882de15834418c57ac0293a8afda033b5f730e466c799c19d8ecd636cb788bcb7c4dc839b0d"
     }
   ],
   "tree_renewals": [],
