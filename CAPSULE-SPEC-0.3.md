@@ -82,7 +82,7 @@ newer checks.
 
 ## Verification algorithm (language-agnostic; re-implement anywhere)
 
-1. **Version / structure.** `capsule_version` must be `0.2`, else WITHHELD.
+1. **Version / structure.** `capsule_version` must be `0.3`, else WITHHELD.
    Missing required fields -> FAILED.
 2. **Leaf-set commitment.** Reconstruct the leaves: `CONTENT` (the content object
    with `id=CONTENT`, `type=CONTENT_COMMITMENT`) followed by each record. Their
